@@ -42,6 +42,20 @@ async fn udp_and_tcp_dns_queries_use_the_configured_socks_server() {
     )
     .await
     .unwrap();
+    let fixed = forwarder.address();
+    assert!(
+        DnsForwarder::start(
+            fixed,
+            "8.8.8.8:53".parse().unwrap(),
+            ProxyGroup {
+                port,
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err(),
+        "a fixed occupied port must not fall back to another port"
+    );
     let mut query = [0u8; 12];
     query[0..3].copy_from_slice(&[0x12, 0x34, 1]);
     let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -68,5 +82,24 @@ async fn udp_and_tcp_dns_queries_use_the_configured_socks_server() {
     assert_eq!(&response[..3], &[0x12, 0x34, 0x81]);
     task.await.unwrap();
     forwarder.shutdown().await;
-    assert!(UdpSocket::bind(forwarder.address()).await.is_ok());
+
+    // Failure to bind TCP must release the UDP socket reserved for the pair.
+    let tcp_only = TcpListener::bind(fixed).await.unwrap();
+    assert!(
+        DnsForwarder::start(
+            fixed,
+            "8.8.8.8:53".parse().unwrap(),
+            ProxyGroup {
+                port,
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err()
+    );
+    let udp_only = UdpSocket::bind(fixed).await.unwrap();
+    assert_eq!(
+        tcp_only.local_addr().unwrap(),
+        udp_only.local_addr().unwrap()
+    );
 }

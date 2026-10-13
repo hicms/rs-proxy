@@ -2,6 +2,7 @@ use crate::socks;
 use anyhow::{Context, Result, bail};
 use proxy_core::config::ProxyGroup;
 use std::{
+    io::ErrorKind,
     net::{SocketAddr, SocketAddrV4},
     sync::Arc,
     time::Duration,
@@ -13,6 +14,25 @@ use tokio::{
     time::timeout,
 };
 use tokio_util::sync::CancellationToken;
+
+async fn bind_listeners(listen: SocketAddrV4) -> Result<(TcpListener, UdpSocket)> {
+    for attempt in 0..32 {
+        // Windows can reserve different ephemeral port ranges for TCP and UDP.
+        let udp = UdpSocket::bind(listen).await.context("监听本地 DNS UDP")?;
+        match TcpListener::bind(udp.local_addr()?).await {
+            Ok(tcp) => return Ok((tcp, udp)),
+            Err(error)
+                if listen.port() == 0
+                    && attempt < 31
+                    && matches!(
+                        error.kind(),
+                        ErrorKind::AddrInUse | ErrorKind::PermissionDenied
+                    ) => {}
+            Err(error) => return Err(error).context("监听本地 DNS TCP"),
+        }
+    }
+    unreachable!("the last bind attempt returns its error")
+}
 
 async fn exchange(group: &ProxyGroup, upstream: SocketAddrV4, query: &[u8]) -> Result<Vec<u8>> {
     if query.len() < 12 || query.len() > u16::MAX as usize || query[2] & 0x80 != 0 {
@@ -75,13 +95,11 @@ impl DnsForwarder {
         .next()
         .context("DNS 代理主机无可用地址")?;
         group.host = resolved.ip().to_string();
-        let tcp = TcpListener::bind(listen)
-            .await
-            .context("监听本地 DNS TCP")?;
+        let (tcp, udp) = bind_listeners(listen).await?;
         let SocketAddr::V4(address) = tcp.local_addr()? else {
             bail!("DNS 监听地址必须为 IPv4");
         };
-        let udp = Arc::new(UdpSocket::bind(address).await.context("监听本地 DNS UDP")?);
+        let udp = Arc::new(udp);
         let cancel = CancellationToken::new();
         let stopped = cancel.clone();
         let task = tokio::spawn(async move {

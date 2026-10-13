@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use proxy_platform::windivert::{Address, DivertHandle};
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     net::{SocketAddr, SocketAddrV4},
     sync::{Arc, atomic::Ordering},
     time::Duration,
@@ -48,9 +49,17 @@ pub(crate) async fn tcp_loop(
                     let result: Result<()> = tokio::select! {
                         _ = cancel.cancelled() => Ok(()),
                         result = async {
-                            let mut upstream = socks::connect(&entry.group,SocketAddr::V4(entry.key.remote)).await?;
+                            let mut upstream = socks::connect(&entry.group,SocketAddr::V4(entry.key.remote)).await
+                                .with_context(|| format!("建立 SOCKS5 连接（代理组 {}，目标 {}）", entry.group.name, entry.key.remote))?;
                             let (client_read, client_write) = client.split(); let (proxy_read, proxy_write) = upstream.split();
-                            tokio::try_join!(meter.transfer(client_read,proxy_write,Direction::Upload),meter.transfer(proxy_read,client_write,Direction::Download))?;
+                            match tokio::try_join!(meter.transfer(client_read,proxy_write,Direction::Upload),meter.transfer(proxy_read,client_write,Direction::Download)) {
+                                Ok(_) => {},
+                                // A reset ends this established stream; it does not stop the proxy engine.
+                                Err(error) if matches!(error.kind(), ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe | ErrorKind::NotConnected) => {
+                                    tracing::debug!(pid = entry.identity.pid, group_id = entry.group.id, destination = %entry.key.remote, %error, "TCP 会话已关闭");
+                                },
+                                Err(error) => return Err(error.into()),
+                            }
                             Ok(())
                         } => result,
                     };

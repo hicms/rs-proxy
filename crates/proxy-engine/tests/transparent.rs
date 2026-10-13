@@ -18,6 +18,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 mod support;
 
+// Zero-timeout linger sends RST immediately; it cannot block like positive linger timeouts.
+#[allow(deprecated)]
+fn reset_connection(stream: TcpStream) -> Result<()> {
+    stream.set_linger(Some(Duration::ZERO))?;
+    Ok(())
+}
+
 async fn mock_connection(
     mut stream: TcpStream,
     targets: Arc<Mutex<Vec<(u8, SocketAddrV4)>>>,
@@ -39,6 +46,9 @@ async fn mock_connection(
         u16::from_be_bytes([request[8], request[9]]),
     );
     targets.lock().unwrap().push((request[1], remote));
+    if remote.ip() == &Ipv4Addr::new(198, 19, 99, 7) {
+        return reset_connection(stream);
+    }
     if remote.ip() == &Ipv4Addr::new(198, 19, 99, 5) {
         stream.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
         return Ok(());
@@ -49,6 +59,9 @@ async fn mock_connection(
         stream.read_exact(&mut payload).await?;
         if &payload != b"tcp-proof" {
             bail!("unexpected TCP payload");
+        }
+        if remote.ip() == &Ipv4Addr::new(198, 19, 99, 6) {
+            return reset_connection(stream);
         }
         stream.write_all(&payload).await?;
         stream.shutdown().await?;
@@ -161,6 +174,29 @@ $client.Client.Shutdown([Net.Sockets.SocketShutdown]::Send); if ($stream.ReadByt
 "#;
         let tcp = run_client(&engine,tcp_script,true).await?;
         assert_eq!(tcp.trim(),"tcp-proof");
+        let reset_script = r#"
+$ErrorActionPreference='Stop'; [Console]::WriteLine('READY'); [Console]::ReadLine() | Out-Null
+$client=[Net.Sockets.TcpClient]::new(); $client.ReceiveTimeout=3000
+$client.Connect('198.19.99.6',443)
+$stream=$client.GetStream(); $data=[Text.Encoding]::ASCII.GetBytes('tcp-proof'); $stream.Write($data,0,$data.Length)
+try { if ($stream.ReadByte() -ne -1) { throw 'expected closed stream' } }
+catch [System.IO.IOException] { if ($_.Exception.InnerException.SocketErrorCode -eq [Net.Sockets.SocketError]::TimedOut) { throw } }
+$client.Dispose(); [Console]::WriteLine('reset')
+"#;
+        assert_eq!(run_client(&engine,reset_script,true).await?.trim(),"reset");
+        timeout(Duration::from_secs(3), async {
+            while engine.stats().tcp_connections != 0 { tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await?;
+        assert!(engine.stats().running);
+        assert_eq!(engine.stats().last_error, None, "an established peer reset is not an engine failure");
+        assert_eq!(run_client(&engine,tcp_script,true).await?.trim(),"tcp-proof");
+        let handshake_reset = reset_script.replace("198.19.99.6", "198.19.99.7")
+            .replace("$stream.Write($data,0,$data.Length)", "");
+        assert_eq!(run_client(&engine,&handshake_reset,true).await?.trim(),"reset");
+        timeout(Duration::from_secs(3), async {
+            while engine.stats().last_error.is_none() { tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await?;
+        assert!(engine.stats().last_error.unwrap().contains("建立 SOCKS5 连接"));
         let direct_script = tcp_script.replace("198.19.99.1',443", "198.19.99.4',4444");
         assert_eq!(run_client(&engine,&direct_script,false).await?.trim(),"tcp-proof");
         assert!(direct_peer.received.load(std::sync::atomic::Ordering::Acquire));
@@ -173,6 +209,7 @@ catch [System.IO.IOException] { if ($_.Exception.InnerException.SocketErrorCode 
 $client.Dispose(); [Console]::WriteLine('rejected')
 "#,true).await?;
         assert_eq!(rejected.trim(),"rejected");
+        assert!(engine.stats().last_error.unwrap().contains("SOCKS5 请求被拒绝"));
         let udp = run_client(&engine,r#"
 $ErrorActionPreference='Stop'; [Console]::WriteLine('READY'); [Console]::ReadLine() | Out-Null
 $client=[Net.Sockets.UdpClient]::new(0); $client.Client.ReceiveTimeout=5000
