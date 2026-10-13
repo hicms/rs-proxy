@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+platform-tests = ["proxy-platform/platform-tests"]
+
+[[test]]
+name = "transparent"
+required-features = ["platform-tests"]
+
 [dependencies]
 proxy-core = { path = "../proxy-core" }
 proxy-platform = { path = "../proxy-platform" }

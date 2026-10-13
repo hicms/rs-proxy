@@ -18,7 +18,7 @@ Windows 上的进程级 SOCKS5 代理工具。Rust 负责网络和系统集成�
 - Windows 10/11 x64、WebView2 Runtime。
 - Rust 1.94 或更新版本，MSVC 工具链；Visual Studio Build Tools 的 C++ 桌面开发组件与 Windows SDK。
 - Node.js 22.13 或更新版本，npm。
-- 运行桌面程序和平台集成测试时需要管理员权限。
+- 运行桌面程序和手动平台集成测试时需要管理员权限；默认测试不需要。
 
 ```powershell
 npm ci
@@ -72,19 +72,22 @@ npm test
 npm run astryx -- doctor
 ```
 
-浏览器测试使用已安装的 Microsoft Edge 和模拟桌面 IPC，验证界面交互与窄窗口布局。Rust 透明代理集成测试启动独立受控进程及本地 SOCKS5 测试服务，目标使用 `198.19.99.0/24`，不依赖外部服务。
+默认 Rust 测试覆盖路由、配置、协议和内存中的 DNS 恢复逻辑，不启动抓包驱动，不要求本地代理或管理员权限。依赖真实 Windows 进程、图标、ETW、WinDivert 和桌面服务引擎的集成用例受 `platform-tests` 特性控制，默认不编译、也不运行。
+
+浏览器测试使用模拟桌面 IPC，验证界面交互与窄窗口布局。本地使用已安装的 Microsoft Edge；CI 使用 Playwright 对应版本的 Chromium，先运行 `npx playwright install chromium`。产品构建只检查产品源码；`npm test` 会先运行独立的测试类型检查，也可单独执行 `npm run check:tests`。完整工作区构建和检查应使用 Windows MSVC 环境；项目尚未配置 CI 工作流。
 
 实际代理与原生桌面验收：
 
 ```powershell
+cargo test --workspace --features rs-proxy/platform-tests
 npm run test:proxy -- 127.0.0.1:7891
 npm run test:native
 npm run test:installer
 ```
 
-`test:proxy` 使用生产协议代码执行真实 TCP/UDP 查询，并在随机回环端口验证 DNS 转发。`test:native` 需要管理员权限、可用的 `127.0.0.1:7891` SOCKS5 服务和公网连接；先退出 RS Proxy，避免两套引擎并发。它每次将带本地调试端口的 QA 程序构建到独立的 `target/native-e2e/`，使用真实 Tauri IPC、独立网络子进程和透明字节观察器，验证进程路由、规则、设置、原生文件对话框和桌面生命周期；测试配置与日常配置分开，并恢复自动启动任务。证据写入 `%TEMP%/rs-proxy-e2e/`。公网超时按失败记录，不能用浏览器模拟测试代替。
+这些命令仅用于本机手动验收，不加入常规 CI。`platform-tests` 需要管理员权限与 WinDivert，透明代理用例启动独立受控进程和本地 SOCKS5 测试服务，目标使用 `198.19.99.0/24`，不依赖外部服务。`test:proxy` 使用生产协议代码执行真实 TCP/UDP 查询，并在随机回环端口验证 DNS 转发。`test:native` 需要管理员权限、可用的 `127.0.0.1:7891` SOCKS5 服务和公网连接；先退出 RS Proxy，避免两套引擎并发。它每次将带本地调试端口的 QA 程序构建到独立的 `target/native-e2e/`，使用真实 Tauri IPC、独立网络子进程和透明字节观察器，验证进程路由、规则、设置、原生文件对话框和桌面生命周期；测试配置与日常配置分开，并恢复自动启动任务。证据写入 `%TEMP%/rs-proxy-e2e/`。公网超时按失败记录，不能用浏览器模拟测试代替。
 
-以上命令均不切换系统 DNS。原生测试始终保持 DNS 关闭，并比较运行前后的网卡 DNS；真实系统 DNS 写入测试默认忽略。随机端口转发通过不代表系统 DNS 接管已验证。
+以上命令均不切换系统 DNS。原生测试始终保持 DNS 关闭，并比较运行前后的网卡 DNS；测试集中不包含系统 DNS 写入用例。随机端口转发通过不代表系统 DNS 接管已验证。
 
 `test:installer` 验证已构建的 NSIS 安装包，要求没有现有 RS Proxy 安装注册，且日常配置已存在并关闭 DNS。它安装到随机临时目录，检查资源、启动与正常退出，再卸载并核对配置与 DNS 基线；测试期间会暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节。
 

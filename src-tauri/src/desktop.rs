@@ -8,6 +8,7 @@ use tauri::{
 use tokio::sync::Mutex;
 
 pub struct Desktop {
+    pub icons: std::sync::Arc<rs_proxy::icons::ProcessIcons>,
     pub service: Mutex<Result<Service, String>>,
     pub close_to_tray: AtomicBool,
     pub exit_ready: AtomicBool,
@@ -79,6 +80,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .ok();
     let close_to_tray = service.as_ref().is_ok_and(|s| s.config().ui.close_to_tray);
     app.manage(Desktop {
+        icons: Default::default(),
         service: Mutex::new(service),
         close_to_tray: AtomicBool::new(close_to_tray),
         exit_ready: AtomicBool::new(false),

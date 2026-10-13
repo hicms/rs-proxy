@@ -13,6 +13,7 @@ fn main() {
         .setup(desktop::setup)
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
+            commands::get_process_icons,
             commands::save_config,
             commands::set_engine_running,
             commands::set_process_proxy,

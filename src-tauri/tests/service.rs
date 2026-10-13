@@ -1,7 +1,10 @@
 use rs_proxy::service::Service;
+#[cfg(feature = "platform-tests")]
 use std::path::Path;
+#[cfg(feature = "platform-tests")]
 static ENGINE_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[cfg(feature = "platform-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn service_persists_valid_configuration_and_releases_the_engine() {
     let _serial = ENGINE_TEST.lock().await;
@@ -38,6 +41,7 @@ async fn a_disk_failure_does_not_change_the_active_configuration() {
     assert_eq!(service.config(), &old);
 }
 
+#[cfg(feature = "platform-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn group_replacement_commits_manual_routes_only_after_the_file_is_saved() {
     let _serial = ENGINE_TEST.lock().await;

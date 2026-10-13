@@ -18,21 +18,34 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { AppWindow, ArrowUp, ArrowDown, ArrowRight, RefreshCw, ListFilter, Network, Search, Undo2 } from 'lucide-react';
 import { GroupSelector, Editor } from '../components/Editor';
 import { Connections } from '../components/Connections';
+import { ProcessIcon } from '../components/ProcessIcon';
+import { processKey, useProcessIcons } from '../processIcons';
 import { bytes, useAppModel, useAction } from '../model';
 import type { Snapshot } from '../bindings/Snapshot';
 import type { ProcessView } from '../bindings/ProcessView';
+import type { Route } from '../bindings/Route';
+
+function proxySource(route: Route | null, ruleNames: Map<string, string>) {
+  if (!route) return '直连';
+  if (route.source === 'manual') return '手动选择（含继承）';
+  return (route.rule_id && ruleNames.get(route.rule_id)) || '规则已不可用';
+}
 
 export default function Processes({ snapshot }: { snapshot: Snapshot }) {
   const [query, setQuery] = useState(''); const [scope, setScope] = useState('all'); const [tab, setTab] = useState('processes'); const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ProcessView>(); const [group, setGroup] = useState(snapshot.config.proxy_groups[0].id);
   const model = useAppModel(); const action = useAction();
+  const ruleNames = useMemo(() => new Map(snapshot.config.auto_rules.map(rule => [rule.id, rule.name])), [snapshot.config.auto_rules]);
+  const currentSelection = selected && snapshot.processes.find(item => processKey(item.process.identity) === processKey(selected.process.identity));
   const rows = useMemo(() => snapshot.processes.filter(item => (scope !== 'proxied' || item.route) && `${item.process.name} ${item.process.identity.pid} ${item.process.image_path} ${item.process.cmdline}`.toLowerCase().includes(query.toLowerCase())), [snapshot.processes, query, scope]);
   const connections = useMemo(() => snapshot.connections.filter(item => `${item.pid} ${item.local_address} ${item.remote_address} ${item.protocol}`.toLowerCase().includes(query.toLowerCase())), [snapshot.connections, query]);
   const total = tab === 'processes' ? rows.length : connections.length; const current = Math.min(page, Math.max(1, Math.ceil(total / 50))); const start = (current - 1) * 50;
+  const visibleProcesses = tab === 'processes' ? rows.slice(start, start + 50) : [];
+  const icons = useProcessIcons(visibleProcesses);
   const columns: TableColumn<ProcessView>[] = [
-    { key: 'name', header: '应用', width: proportional(3), renderCell: item => <HStack gap={3} vAlign="center"><Icon icon={AppWindow} color="secondary" /><VStack gap={0.5}><Text weight="semibold" maxLines={1}>{item.process.name}</Text><Text type="supporting" color="secondary">PID {item.process.identity.pid}</Text></VStack></HStack> },
+    { key: 'name', header: '应用', width: proportional(3), renderCell: item => <HStack gap={3} vAlign="center"><ProcessIcon dataUrl={icons?.get(processKey(item.process.identity))} /><VStack gap={0.5}><Text weight="semibold" maxLines={1}>{item.process.name}</Text><Text type="supporting" color="secondary">PID {item.process.identity.pid}</Text></VStack></HStack> },
     { key: 'route', header: '连接方式', width: proportional(2), renderCell: item => item.route ? <Token label={snapshot.config.proxy_groups.find(group => group.id === item.route?.group_id)?.name ?? '代理'} color="green" size="sm" /> : <Text color="secondary">直连</Text> },
-    { key: 'source', header: '来源', renderCell: item => <Text type="supporting">{item.route?.source === 'manual' ? '手动 / 继承' : item.route ? '自动规则' : '—'}</Text> },
+    { key: 'source', header: '代理来源', width: proportional(3), renderCell: item => <Text maxLines={2} color={item.route ? 'primary' : 'secondary'}>{proxySource(item.route, ruleNames)}</Text> },
     { key: 'actions', header: '', align: 'end', renderCell: item => <IconButton label="详情与代理" tooltip="查看详情与代理设置" icon={<Icon icon={ArrowRight} />} variant="ghost" size="sm" onClick={() => { setSelected(item); setGroup(item.route?.group_id ?? snapshot.config.proxy_groups[0].id); }} /> },
   ];
   return <><Layout header={<LayoutHeader hasDivider><VStack gap={4}>
@@ -42,11 +55,12 @@ export default function Processes({ snapshot }: { snapshot: Snapshot }) {
       {tab === 'processes' && <SegmentedControl label="显示范围" value={scope} onChange={value => { setScope(value); setPage(1); }}><SegmentedControlItem value="all" label="全部" /><SegmentedControlItem value="proxied" label="已选代理" icon={<Icon icon={ListFilter} />} /></SegmentedControl>}
     </HStack>
   </VStack></LayoutHeader>} content={<LayoutContent>
-    {tab === 'processes' ? (rows.length ? <Table data={rows.slice(start, start + 50)} columns={columns} idKey={item => `${item.process.identity.pid}:${item.process.identity.sequence}`} rowCount={rows.length} rowIndexStart={start + 1} density="balanced" hasHover /> : <EmptyState icon={<Icon icon={Search} size="lg" />} title="没有匹配的进程" description="调整搜索条件或显示范围。" />) : <Connections data={connections.slice(start, start + 50)} />}
+    {tab === 'processes' ? (rows.length ? <Table data={visibleProcesses} columns={columns} idKey={item => processKey(item.process.identity)} rowCount={rows.length} rowIndexStart={start + 1} density="balanced" hasHover /> : <EmptyState icon={<Icon icon={Search} size="lg" />} title="没有匹配的进程" description="调整搜索条件或显示范围。" />) : <Connections data={connections.slice(start, start + 50)} />}
   </LayoutContent>} footer={<LayoutFooter hasDivider><HStack hAlign="between" vAlign="center" wrap="wrap" gap={2}><Text type="supporting">共 {total} 项 · 每 2 秒更新</Text><Pagination label="列表分页" page={current} onChange={setPage} totalItems={total} pageSize={50} variant="compact" /></HStack></LayoutFooter>} />
     {selected && <Editor title={selected.process.name} saveLabel="应用到进程树" onClose={() => setSelected(undefined)} onSave={async () => { await invoke('set_process_proxy', { identity: selected.process.identity, groupId: group }); await model.refresh(); }}>
       {action.error && <Banner status="error" title="操作未完成" description={action.error} />}
       <Text color="secondary">PID {selected.process.identity.pid} · 父进程 {selected.process.parent?.pid ?? '—'}。选择会覆盖此进程树的自动规则。</Text>
+      <Text>当前代理来源：{currentSelection ? proxySource(currentSelection.route, ruleNames) : '进程已结束'}</Text>
       <TextInput label="程序路径" value={selected.process.image_path} isReadOnly />
       <TextArea label="命令行" value={selected.process.cmdline || '无法读取'} isReadOnly rows={3} />
       <GroupSelector groups={snapshot.config.proxy_groups} value={group} onChange={setGroup} />

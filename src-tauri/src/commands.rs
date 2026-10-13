@@ -1,13 +1,24 @@
 use crate::desktop::Desktop;
 use proxy_core::{
     config::{Config, ProxyGroup},
-    model::{AutostartState, ProcessIdentity, ProxyTestResult, Snapshot},
+    model::{AutostartState, ProcessIcon, ProcessIdentity, ProxyTestResult, Snapshot},
 };
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
 fn message(error: impl std::fmt::Display) -> String {
     format!("{error:#}")
+}
+#[tauri::command]
+pub async fn get_process_icons(
+    state: State<'_, Desktop>,
+    identities: Vec<ProcessIdentity>,
+) -> Result<Vec<ProcessIcon>, String> {
+    let icons = state.icons.clone();
+    tokio::task::spawn_blocking(move || icons.get(identities))
+        .await
+        .map_err(message)?
+        .map_err(message)
 }
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, Desktop>) -> Result<Snapshot, String> {

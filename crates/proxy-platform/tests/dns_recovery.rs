@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use proxy_platform::dns::{AdapterDns, DnsBackend, DnsController, WindowsDns};
+use proxy_platform::dns::{AdapterDns, DnsBackend, DnsController};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -105,13 +105,4 @@ fn journal_write_failure_prevents_any_system_change() {
     let mut controller = DnsController::new(path.join("dns.json"), backend.clone());
     assert!(controller.enable("127.0.0.2").is_err());
     assert_eq!(backend.0.lock().unwrap().servers, baseline);
-}
-
-#[test]
-fn windows_dns_settings_are_read_without_changing_the_system() {
-    let adapters = WindowsDns.adapters().unwrap();
-    assert!(!adapters.is_empty());
-    for adapter in adapters {
-        assert_eq!(WindowsDns.read(&adapter.id).unwrap(), adapter.servers);
-    }
 }

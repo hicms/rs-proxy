@@ -2719,6 +2719,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libloading 0.8.9",
+ "png 0.18.1",
  "proxy-core",
  "serde",
  "serde_json",
@@ -2900,6 +2901,7 @@ name = "rs-proxy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "proxy-core",
  "proxy-engine",
  "proxy-platform",

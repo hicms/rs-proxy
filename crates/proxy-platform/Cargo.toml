@@ -4,6 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+platform-tests = []
+
+[[test]]
+name = "icons"
+required-features = ["platform-tests"]
+
+[[test]]
+name = "windows_process"
+required-features = ["platform-tests"]
+
+[[test]]
+name = "process_events"
+required-features = ["platform-tests"]
+
+[[test]]
+name = "divert_events"
+required-features = ["platform-tests"]
+
 [dependencies]
 proxy-core = { path = "../proxy-core" }
 serde.workspace = true
@@ -11,7 +30,8 @@ serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 libloading = "0.8"
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Graphics_Gdi"] }
+png.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

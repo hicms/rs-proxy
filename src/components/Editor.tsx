@@ -15,7 +15,7 @@ export function Editor({ title, children, onClose, onSave, saveLabel = '保存',
   const action = useAction();
   const close = () => { if (!action.busy) onClose(); };
   return <Dialog isOpen onOpenChange={close} purpose="form" width="48rem">
-    <Layout height="auto" header={<DialogHeader title={title} onOpenChange={close} />}
+    <Layout header={<DialogHeader title={title} onOpenChange={close} />}
       content={<LayoutContent><VStack gap={4}>{action.error && <Banner status="error" title="操作未完成" description={action.error} />}{children}</VStack></LayoutContent>}
       footer={<LayoutFooter hasDivider><HStack gap={2} hAlign="end">
         <Button label="取消" onClick={close} isDisabled={action.busy} />

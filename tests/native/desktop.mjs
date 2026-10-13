@@ -27,7 +27,7 @@ const dialog = () => page.getByRole('dialog');
 async function check(name, action, keepGoing = false) {
   try { await action(); records.push({ name, passed: true }); console.log(`PASS ${name}`); }
   catch (error) { records.push({ name, passed: false, error: String(error) }); if (!keepGoing) throw error; failures.push(error); console.error(`FAIL ${name}: ${error}`); }
-  await writeFile(join(evidence, 'checks.json'), JSON.stringify(records, null, 2));
+  finally { await writeFile(join(evidence, 'checks.json'), JSON.stringify(records, null, 2)); }
 }
 async function choose(label, value, scope = page) {
   await scope.getByRole('combobox', { name: label, exact: true }).click();
@@ -96,10 +96,55 @@ try {
 
   await check('native identity, real process list, initial screenshot', async () => {
     assert.equal(await page.title(), 'RS Proxy'); assert.ok((await snapshot()).processes.length > 10);
+    await expect.poll(() => page.getByRole('row').locator('svg image').count()).toBeGreaterThan(1);
     await page.screenshot({ path: join(evidence, 'processes.png') });
     await button('转到下一页').click();
     await expect.poll(async () => Number(await page.getByRole('row').nth(1).getAttribute('aria-rowindex'))).toBeGreaterThan(50);
     await button('转到上一页').click();
+  });
+  await check('real process icons, PNG decoding, stale identity and batch limit', async () => {
+    // The engine reconciles the process list every 30 seconds if an ETW event is delayed.
+    await expect.poll(async () => (await snapshot()).processes.some(item => item.process.identity.pid === ready.pid), { timeout: 35000 }).toBeTruthy();
+    const processes = (await snapshot()).processes;
+    const own = processes.find(item => item.process.identity.pid === applicationPid).process.identity;
+    const node = processes.find(item => item.process.identity.pid === ready.pid).process.identity;
+    const icons = await rpc('get_process_icons', { identities: [own, node, { ...own, sequence: 'invalid' }] });
+    assert.ok(icons[0].data_url.startsWith('data:image/png;base64,'));
+    assert.ok(icons[1].data_url.startsWith('data:image/png;base64,'));
+    assert.notEqual(icons[0].data_url, icons[1].data_url);
+    assert.equal(icons[2].data_url, null);
+    await assert.rejects(rpc('get_process_icons', { identities: Array(51).fill(own) }), /50/);
+    const decoded = await page.evaluate(urls => Promise.all(urls.map(url => new Promise((resolve, reject) => {
+      const image = new Image(); image.onload = () => resolve([image.naturalWidth, image.naturalHeight]); image.onerror = () => reject(new Error('Invalid native PNG')); image.src = url;
+    }))), icons.slice(0, 2).map(icon => icon.data_url));
+    assert.deepEqual(decoded, [[32, 32], [32, 32]]);
+    const search = page.getByRole('textbox', { name: '搜索进程、PID 或地址' });
+    await search.fill('');
+    await expect.poll(async () => new Set(await page.getByRole('row').locator('svg image').evaluateAll(images => images.map(image => image.getAttribute('href')))).size).toBeGreaterThan(1);
+    await page.screenshot({ path: join(evidence, 'process-icons.png') });
+  });
+  await check('native small-window rule dialog scroll and reachable actions', async () => {
+    await nav('路由规则'); await button('新建规则').click();
+    try {
+      await page.setViewportSize({ width: 760, height: 560 });
+      const save = dialog().getByRole('button', { name: '保存', exact: true });
+      await expect(save).toBeInViewport({ ratio: 1 });
+      await save.click();
+      await expect(dialog().getByText('操作未完成', { exact: true })).toBeVisible();
+      const body = dialog().locator('.astryx-layout-content');
+      const footer = dialog().locator('.astryx-layout-footer');
+      const before = await footer.boundingBox();
+      await body.hover(); await page.mouse.wheel(0, 2000);
+      await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+      await expect(dialog().getByRole('checkbox', { name: '启用这条规则' })).toBeInViewport({ ratio: 1 });
+      await expect(dialog().getByRole('heading', { name: '新建路由规则' })).toBeInViewport({ ratio: 1 });
+      assert.ok(Math.abs((await footer.boundingBox()).y - before.y) < 1);
+      await save.click({ trial: true });
+      await page.screenshot({ path: join(evidence, 'rule-dialog-small.png') });
+      await dialog().getByRole('button', { name: '取消', exact: true }).click();
+      await expect(dialog()).toHaveCount(0);
+    } finally { await page.setViewportSize({ width: 1280, height: 820 }); }
+    await nav('进程与连接');
   });
   await check('proxy creation, real handshake, edit and validation failure', async () => {
     await group('验证 A', observerA.port); await group('验证 B', observerB.port);
@@ -130,8 +175,18 @@ try {
   await check('manual removal restores direct connection', async () => {
     await processDialog(ready.pid); await button('移除手动选择，使用自动规则').click(); await expect(dialog()).toHaveCount(0); await direct();
   });
-  await check('automatic rule matches real executable and command line', async () => { await rule('规则 A', '验证 A'); await httpsThrough(observerA); });
-  await check('new descendant inherits parent rule', async () => { const child = await request({ kind: 'spawn' }); assert.ok(child.ready); await httpsThrough(observerA, 'child'); });
+  await check('automatic rule matches real executable and command line', async () => {
+    await rule('规则 A', '验证 A'); await httpsThrough(observerA);
+    await processDialog(ready.pid);
+    await expect(dialog().getByText('当前代理来源：规则 A', { exact: true })).toBeVisible();
+    await dialog().getByRole('button', { name: '取消', exact: true }).click();
+  });
+  await check('new descendant inherits parent rule', async () => {
+    const child = await request({ kind: 'spawn' }); assert.ok(child.ready); await httpsThrough(observerA, 'child');
+    await processDialog(child.pid);
+    await expect(dialog().getByText('当前代理来源：规则 A', { exact: true })).toBeVisible();
+    await dialog().getByRole('button', { name: '取消', exact: true }).click();
+  });
   await check('rule priority and enabled state change actual upstream', async () => {
     await rule('规则 B', '验证 B'); await httpsThrough(observerA);
     await ruleRow('规则 B').getByRole('button', { name: '上移' }).click(); await expect(page.getByRole('row').nth(1)).toContainText('规则 B'); await httpsThrough(observerB);
@@ -175,8 +230,12 @@ try {
     await button('网络').click(); const field = page.getByRole('textbox', { name: '全局排除网段', exact: true }); const original = await field.inputValue();
     const revision = (await snapshot()).config.revision;
     await field.fill('invalid-cidr'); await button('保存设置').click(); await expect(page.getByText('设置未保存', { exact: true })).toBeVisible(); assert.equal((await snapshot()).config.revision, revision);
-    await field.fill(`${original}\n1.1.1.1/32`); await button('保存设置').click(); await expect(button('保存设置')).toBeDisabled(); await direct();
-    await field.fill(original); await button('保存设置').click(); await expect(button('保存设置')).toBeDisabled(); await httpsThrough(observerB); await button('常规').click();
+    await field.fill(`${original}\n1.1.1.1/32`); await button('保存设置').click();
+    await expect.poll(async () => (await snapshot()).config.default_exclude_cidrs).toContain('1.1.1.1/32');
+    await expect(field).toBeEnabled(); await direct();
+    await field.fill(original); await button('保存设置').click();
+    await expect.poll(async () => (await snapshot()).config.default_exclude_cidrs).toEqual(original.split('\n').filter(Boolean));
+    await expect(field).toBeEnabled(); await httpsThrough(observerB); await button('常规').click();
   });
   await check('failed proxy handshake is shown in the real UI', async () => {
     const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening'); const port = server.address().port; server.close(); await once(server, 'close');
@@ -214,6 +273,7 @@ try {
   await writeFile(join(evidence, 'upstream-records.json'), JSON.stringify({ a: observerA.records, b: observerB.records }, null, 2));
   assert.equal(failures.length, 0, 'Some independent checks failed; inspect checks.json');
 } catch (error) {
+  if (page) await snapshot().then(value => writeFile(join(evidence, 'failure-snapshot.json'), JSON.stringify(value, null, 2))).catch(() => {});
   await writeFile(join(evidence, 'upstream-records.json'), JSON.stringify({ a: observerA?.records, b: observerB?.records }, null, 2));
   console.error(error); if (page) await page.screenshot({ path: join(evidence, 'failure.png') }).catch(() => {}); process.exitCode = 1;
 } finally {

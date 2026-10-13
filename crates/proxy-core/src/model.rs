@@ -9,6 +9,12 @@ pub struct ProcessIdentity {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ProcessIcon {
+    pub identity: ProcessIdentity,
+    pub data_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ProcessInfo {
     pub identity: ProcessIdentity,
     pub parent: Option<ProcessIdentity>,
