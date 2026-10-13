@@ -59,7 +59,7 @@ test('process identity, rule editing, proxy errors, theme and narrow layout', as
   await expect(page.getByRole('dialog').getByRole('textbox', { name: '命令行' })).toHaveValue('chrome.exe --profile work');
   await page.getByRole('button', { name: '应用到进程树' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByText('手动选择（含继承）')).toBeVisible();
+  await expect(page.getByRole('table').getByText('手动选择（含继承）')).toBeVisible();
   await page.screenshot({ path: join(tmpdir(), 'rs-proxy-processes.png') });
   await page.getByRole('link', { name: '路由规则', exact: true }).click();
   await page.getByRole('button', { name: '新建规则' }).click();

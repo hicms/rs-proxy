@@ -28,7 +28,7 @@ export function useModel() {
   }, []);
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 2000);
+    const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 1000);
     const listener = isTauri() ? listen<string>('service-error', event => setError(event.payload)) : undefined;
     return () => { clearInterval(timer); void listener?.then(unlisten => unlisten()); };
   }, [refresh]);
@@ -66,7 +66,8 @@ export function useAction() {
 }
 export const lines = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
 export function bytes(value: number) {
-  if (value < 1024) return `${value} B`;
+  if (value < 1024) return `${Math.round(value)} B`;
   if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(value / 1024 ** 3).toFixed(1)} GiB`;
 }

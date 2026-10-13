@@ -63,12 +63,41 @@ pub struct EngineStats {
     pub dns_active: bool,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct TrafficStats {
+    pub uploaded_bytes: f64,
+    pub downloaded_bytes: f64,
+    pub upload_bytes_per_second: f64,
+    pub download_bytes_per_second: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct GroupTraffic {
+    pub group_id: u32,
+    pub stats: TrafficStats,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ProcessTraffic {
+    pub identity: ProcessIdentity,
+    pub total: TrafficStats,
+    pub groups: Vec<GroupTraffic>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct TrafficSnapshot {
+    pub total: TrafficStats,
+    pub groups: Vec<GroupTraffic>,
+    pub processes: Vec<ProcessTraffic>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Snapshot {
     pub config: Config,
     pub processes: Vec<ProcessView>,
     pub connections: Vec<Connection>,
     pub stats: EngineStats,
+    pub traffic: TrafficSnapshot,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]

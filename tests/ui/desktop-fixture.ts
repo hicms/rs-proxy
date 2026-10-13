@@ -3,6 +3,7 @@ import type { Snapshot } from '../../src/bindings/Snapshot';
 import { readFileSync } from 'node:fs';
 
 const fixture: Snapshot = {
+  traffic: { total: { uploaded_bytes: 0, downloaded_bytes: 0, upload_bytes_per_second: 0, download_bytes_per_second: 0 }, groups: [], processes: [] },
   config: { version: 1, revision: 0, proxy_groups: [{ id: 0, name: '本地代理', host: '127.0.0.1', port: 7890 }], auto_rules: [], default_exclude_cidrs: ['127.0.0.0/8', '10.0.0.0/8'], dns: { enabled: false, upstream_host: '8.8.8.8', upstream_port: 53, listen_host: '127.0.0.2', listen_port: 53, proxy_group_id: 0 }, ui: { theme: 'light', close_to_tray: true }, log_level: 'info', tcp_syn_parking: { watchdog_ms: 20, pool_size: 256 } },
   processes: ['Code.exe', 'chrome.exe', 'pwsh.exe'].map((name, index) => ({ process: { identity: { pid: 100 + index, sequence: String(index + 1) }, parent: null, name, image_path: `C:\\Apps\\${name}`, cmdline: `${name} --profile work` }, route: null })),
   connections: [{ pid: 101, protocol: 'tcp', local_address: '10.0.0.2', local_port: 50123, remote_address: '192.0.2.1', remote_port: 443, state: 'ESTABLISHED' }],

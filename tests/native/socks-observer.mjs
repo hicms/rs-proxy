@@ -22,10 +22,10 @@ async function address(socket, type) {
 export async function observeSocks(host = '127.0.0.1', port = 7891) {
   const records = []; const sockets = new Set(); const errors = [];
   const track = socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); socket.on('error', error => errors.push(error.message)); return socket; };
-  const server = createServer(client => {
+  const server = createServer({ allowHalfOpen: true }, client => {
     track(client);
     void (async () => {
-      const upstream = track(createConnection({ host, port }));
+      const upstream = track(createConnection({ host, port, allowHalfOpen: true }));
       client.once('close', () => upstream.destroy()); upstream.once('close', () => client.destroy());
       await once(upstream, 'connect');
       const greeting = await read(client, 2); const methods = await read(client, greeting[1]);
@@ -52,11 +52,11 @@ export async function observeSocks(host = '127.0.0.1', port = 7891) {
         record.relay = `${upstreamHost}:${upstreamPort}`;
         relay.on('message', (bytes, source) => {
           peer = source;
-          if (bytes.length >= 12 && bytes[3] === 1) record.datagrams.push({ direction: 'request', target: `${[...bytes.subarray(4, 8)].join('.')}:${bytes.readUInt16BE(8)}`, id: bytes.readUInt16BE(10) });
+          if (bytes.length >= 12 && bytes[3] === 1) record.datagrams.push({ direction: 'request', target: `${[...bytes.subarray(4, 8)].join('.')}:${bytes.readUInt16BE(8)}`, id: bytes.readUInt16BE(10), bytes: bytes.length - 10 });
           udp.send(bytes, upstreamPort, upstreamHost);
         });
         udp.on('message', (bytes, source) => {
-          if (bytes.length >= 12 && bytes[3] === 1) record.datagrams.push({ direction: 'response', source: `${source.address}:${source.port}`, target: `${[...bytes.subarray(4, 8)].join('.')}:${bytes.readUInt16BE(8)}`, id: bytes.readUInt16BE(10) });
+          if (bytes.length >= 12 && bytes[3] === 1) record.datagrams.push({ direction: 'response', source: `${source.address}:${source.port}`, target: `${[...bytes.subarray(4, 8)].join('.')}:${bytes.readUInt16BE(8)}`, id: bytes.readUInt16BE(10), bytes: bytes.length - 10 });
           if (peer) relay.send(bytes, peer.port, peer.address);
         });
         const local = Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 0]); local.writeUInt16BE(relay.address().port, 8); client.write(local);

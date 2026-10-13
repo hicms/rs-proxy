@@ -5,4 +5,5 @@ mod relay;
 mod runtime;
 pub mod socks;
 mod state;
+pub mod traffic;
 pub use runtime::Engine;

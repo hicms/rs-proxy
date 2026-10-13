@@ -44,6 +44,7 @@ impl Engine {
         let mut state = State::new(config)?;
         state.seed_udp(&connections::snapshot()?);
         let shared = Arc::new(Shared {
+            traffic: state.traffic.clone(),
             state: Mutex::new(state),
             counters: Counters::default(),
             stopping: AtomicBool::new(false),
@@ -168,6 +169,22 @@ impl Engine {
             let _ = supervisor_network.shutdown_receive();
             let _ = supervisor_socket.shutdown_receive();
         }));
+        let sampler = shared.clone();
+        let sampler_cancel = cancel.clone();
+        engine.tasks.push(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    _ = sampler_cancel.cancelled() => break,
+                    _ = interval.tick() => {
+                        let state = sampler.state.lock().unwrap();
+                        sampler.traffic.sample(Instant::now(), &state.tree);
+                    }
+                }
+            }
+        }));
         engine.tasks.push(tokio::spawn(relay::tcp_loop(
             listener,
             shared.clone(),
@@ -188,11 +205,14 @@ impl Engine {
                 state.policy.clone(),
             )
         };
+        let stats = self.shared.stats();
+        let traffic = self.shared.traffic.snapshot(stats.running);
         Ok(Snapshot {
             config,
             processes: tree.snapshot(&policy),
             connections,
-            stats: self.shared.stats(),
+            stats,
+            traffic,
         })
     }
     pub fn stats(&self) -> EngineStats {

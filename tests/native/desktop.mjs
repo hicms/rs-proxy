@@ -30,7 +30,7 @@ async function check(name, action, keepGoing = false) {
   finally { await writeFile(join(evidence, 'checks.json'), JSON.stringify(records, null, 2)); }
 }
 async function choose(label, value, scope = page) {
-  await scope.getByRole('combobox', { name: label, exact: true }).click();
+  await scope.getByRole(label === '筛选代理组' ? 'button' : 'combobox', { name: label, exact: true }).click();
   await page.getByRole('option', { name: value, exact: true }).click();
 }
 async function saveDialog() { await dialog().getByRole('button', { name: '保存', exact: true }).click(); await expect(dialog()).toHaveCount(0); }
@@ -55,16 +55,40 @@ async function request(command) {
   const response = JSON.parse(next.value); assert.ok(response.ok, response.error); return response.result;
 }
 async function httpsThrough(observer, kind = 'https') {
+  const before = await snapshot();
   const start = observer.records.length;
   const command = { kind: 'https', nonce: `${Date.now()}-${start}` };
   const result = await request(kind === 'child' ? { kind: 'child', request: command } : command);
   if (kind === 'child') assert.ok(result.ok, result.error);
   await expect.poll(() => observer.records.slice(start).some(record => record.command === 1 && record.target === '1.1.1.1:443' && record.reply === 0 && record.uploaded > 0 && record.downloaded > 0)).toBeTruthy();
+  await trafficDelta(before, observer, start, kind !== 'child');
+}
+async function trafficDelta(before, observer, start, checkProcess = true) {
+  const groupId = before.config.proxy_groups.find(group => group.port === observer.port).id;
+  const counts = stats => [stats?.uploaded_bytes ?? 0, stats?.downloaded_bytes ?? 0];
+  const delta = (next, previous) => counts(next).map((value, index) => value - counts(previous)[index]);
+  await expect.poll(async () => {
+    const after = await snapshot();
+    const expected = observer.records.slice(start).reduce((sum, record) => [
+      sum[0] + record.uploaded + record.datagrams.filter(packet => packet.direction === 'request').reduce((bytes, packet) => bytes + packet.bytes, 0),
+      sum[1] + record.downloaded + record.datagrams.filter(packet => packet.direction === 'response').reduce((bytes, packet) => bytes + packet.bytes, 0),
+    ], [0, 0]);
+    const checks = [delta(after.traffic.total, before.traffic.total), delta(after.traffic.groups.find(group => group.group_id === groupId)?.stats, before.traffic.groups.find(group => group.group_id === groupId)?.stats)];
+    if (checkProcess) {
+      const previous = before.traffic.processes.find(item => item.identity.pid === client.pid);
+      const next = after.traffic.processes.find(item => item.identity.pid === client.pid);
+      checks.push(delta(next?.total, previous?.total), delta(next?.groups.find(group => group.group_id === groupId)?.stats, previous?.groups.find(group => group.group_id === groupId)?.stats));
+    }
+    return expected.every(value => value > 0) && checks.every(value => value.every((bytes, index) => bytes === expected[index]));
+  }, { message: 'Real forwarded payload must match global, group and process byte counters' }).toBeTruthy();
 }
 async function direct() {
+  const stats = (await snapshot()).traffic.total;
   const before = [observerA.records.length, observerB.records.length];
   assert.equal((await request({ kind: 'https', nonce: `direct-${Date.now()}` })).status, 200);
   assert.deepEqual([observerA.records.length, observerB.records.length], before);
+  const after = (await snapshot()).traffic.total;
+  assert.deepEqual([after.uploaded_bytes, after.downloaded_bytes], [stats.uploaded_bytes, stats.downloaded_bytes]);
 }
 async function rule(name, groupName) {
   await nav('路由规则'); await button('新建规则').click();
@@ -156,21 +180,33 @@ try {
     await dialog().getByRole('textbox', { name: '名称 必填', exact: true }).fill('验证 A'); await saveDialog();
     await page.screenshot({ path: join(evidence, 'proxies.png') });
   });
-  await check('manual process selection, real HTTPS through upstream 7891', async () => { await manual(ready.pid, '验证 A'); await httpsThrough(observerA); });
+  await check('manual selection, real HTTPS payload counts and sampled rates through upstream 7891', async () => {
+    await manual(ready.pid, '验证 A'); await httpsThrough(observerA);
+    await expect.poll(async () => (await snapshot()).traffic.processes.find(item => item.identity.pid === ready.pid)?.total.download_bytes_per_second ?? 0).toBeGreaterThan(0);
+    await expect.poll(async () => (await snapshot()).traffic.total.download_bytes_per_second).toBe(0);
+  });
   await check('process filter, details and live connection list', async () => {
     await nav('进程与连接'); await page.getByRole('textbox', { name: '搜索进程、PID 或地址' }).fill(String(ready.pid));
     await page.getByRole('radio', { name: '已选代理', exact: true }).check();
     await expect(page.getByText(`PID ${ready.pid}`, { exact: true })).toBeVisible();
+    await choose('筛选代理组', '验证 A');
+    await expect(page.getByText('验证 A · 本次启动流量（仅代理）', { exact: true })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '实时流量' })).toBeVisible();
+    await page.screenshot({ path: join(evidence, 'live-traffic.png') });
+    await choose('筛选代理组', '验证 B'); await expect(page.getByText('没有匹配的进程', { exact: true })).toBeVisible();
+    await choose('筛选代理组', '全部代理组');
     await request({ kind: 'hold' }); await button('连接').click(); await button('立即刷新').click();
     await expect(page.getByRole('row').filter({ has: page.getByText(String(ready.pid), { exact: true }) }).first()).toContainText('TCP');
     await request({ kind: 'release' }); await button('进程').click(); await page.getByRole('radio', { name: '全部', exact: true }).check();
   });
   await check('UDP ASSOCIATE with valid DNS replies from two targets', async () => {
+    const before = await snapshot();
     const start = observerA.records.length;
     const replies = await request({ kind: 'udp', id: 5100, hosts: ['1.1.1.1', '1.0.0.1'] }); assert.equal(replies.length, 2);
     assert.ok(observerA.records.slice(start).some(record => record.command === 3 && record.reply === 0));
     const datagrams = observerA.records.slice(start).flatMap(record => record.datagrams);
     for (const [index, target] of ['1.1.1.1:53', '1.0.0.1:53'].entries()) for (const direction of ['request', 'response']) assert.ok(datagrams.some(packet => packet.direction === direction && packet.target === target && packet.id === 5100 + index), `Missing real UDP ${direction}: ${target}`);
+    await trafficDelta(before, observerA, start);
   }, true);
   await check('manual removal restores direct connection', async () => {
     await processDialog(ready.pid); await button('移除手动选择，使用自动规则').click(); await expect(dialog()).toHaveCount(0); await direct();
@@ -215,7 +251,10 @@ try {
   });
   await check('engine pause, direct access, restart', async () => {
     await button('暂停代理').click(); await expect(button('启动代理')).toBeVisible(); await direct();
-    await button('启动代理').click(); await expect(button('暂停代理')).toBeVisible(); await manual(ready.pid, '验证 B'); await httpsThrough(observerB);
+    assert.deepEqual((await snapshot()).traffic, { total: { uploaded_bytes: 0, downloaded_bytes: 0, upload_bytes_per_second: 0, download_bytes_per_second: 0 }, groups: [], processes: [] });
+    await button('启动代理').click(); await expect(button('暂停代理')).toBeVisible();
+    assert.equal((await snapshot()).traffic.total.uploaded_bytes, 0);
+    await manual(ready.pid, '验证 B'); await httpsThrough(observerB);
   });
   await check('settings theme, discard, advanced save and network defaults', async () => {
     await nav('设置'); await choose('主题', '深色'); await button('放弃修改').click(); await expect(page.getByRole('combobox', { name: '主题' })).toContainText('跟随系统');

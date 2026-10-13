@@ -1,4 +1,4 @@
-use crate::model::Route;
+use crate::model::{ProcessIdentity, Route};
 use std::{collections::HashMap, net::SocketAddrV4};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -12,6 +12,7 @@ pub struct FlowDecision {
     pub endpoint: Option<u64>,
     pub timestamp: i64,
     pub route: Option<Route>,
+    pub identity: Option<ProcessIdentity>,
     pub sequence: Option<u32>,
     pub pinned_direct: bool,
 }
@@ -29,6 +30,7 @@ impl FlowTable {
         endpoint: u64,
         timestamp: i64,
         route: Option<Route>,
+        identity: Option<ProcessIdentity>,
     ) -> bool {
         if self
             .next
@@ -41,6 +43,7 @@ impl FlowTable {
             endpoint: Some(endpoint),
             timestamp,
             route,
+            identity,
             sequence: None,
             pinned_direct: false,
         };
@@ -98,6 +101,7 @@ impl FlowTable {
                 endpoint: None,
                 timestamp,
                 route: None,
+                identity: None,
                 sequence: Some(sequence),
                 pinned_direct: true,
             },

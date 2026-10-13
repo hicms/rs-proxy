@@ -3,5 +3,6 @@ import type { Config } from "./Config";
 import type { Connection } from "./Connection";
 import type { EngineStats } from "./EngineStats";
 import type { ProcessView } from "./ProcessView";
+import type { TrafficSnapshot } from "./TrafficSnapshot";
 
-export type Snapshot = { config: Config, processes: Array<ProcessView>, connections: Array<Connection>, stats: EngineStats, };
+export type Snapshot = { config: Config, processes: Array<ProcessView>, connections: Array<Connection>, stats: EngineStats, traffic: TrafficSnapshot, };

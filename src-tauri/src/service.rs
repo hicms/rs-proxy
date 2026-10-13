@@ -149,6 +149,7 @@ impl Service {
             let mut tree = ProcessTree::default();
             tree.synchronize(process::snapshot()?);
             Snapshot {
+                traffic: Default::default(),
                 config,
                 processes: tree.snapshot(&policy),
                 connections: connections::snapshot()?,

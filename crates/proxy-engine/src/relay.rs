@@ -2,43 +2,19 @@ use crate::{
     packet,
     socks::{self, Association, SocksAddress},
     state::{Shared, UdpRoute},
+    traffic::Direction,
 };
 use anyhow::{Context, Result};
 use proxy_platform::windivert::{Address, DivertHandle};
 use std::{
     collections::HashMap,
     net::{SocketAddr, SocketAddrV4},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpListener,
-    sync::mpsc,
-    task::JoinSet,
-    time::interval,
-};
+use tokio::{io::AsyncReadExt, net::TcpListener, sync::mpsc, task::JoinSet, time::interval};
 use tokio_util::sync::CancellationToken;
 
-async fn pump<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
-    mut reader: R,
-    mut writer: W,
-    counter: &AtomicU64,
-) -> Result<()> {
-    let mut bytes = vec![0; 32768];
-    loop {
-        let count = reader.read(&mut bytes).await?;
-        if count == 0 {
-            writer.shutdown().await?;
-            return Ok(());
-        }
-        writer.write_all(&bytes[..count]).await?;
-        counter.fetch_add(count as u64, Ordering::Relaxed);
-    }
-}
 pub(crate) async fn tcp_loop(
     listener: TcpListener,
     shared: Arc<Shared>,
@@ -67,13 +43,14 @@ pub(crate) async fn tcp_loop(
                 let Some(entry) = entry else { continue; };
                 let shared = shared.clone(); let cancel = cancel.clone();
                 tasks.spawn(async move {
+                    let meter = shared.traffic.register(&entry.identity, &entry.traffic_group);
                     shared.counters.tcp.fetch_add(1,Ordering::Relaxed);
                     let result: Result<()> = tokio::select! {
                         _ = cancel.cancelled() => Ok(()),
                         result = async {
                             let mut upstream = socks::connect(&entry.group,SocketAddr::V4(entry.key.remote)).await?;
                             let (client_read, client_write) = client.split(); let (proxy_read, proxy_write) = upstream.split();
-                            tokio::try_join!(pump(client_read,proxy_write,&shared.counters.uploaded),pump(proxy_read,client_write,&shared.counters.downloaded))?;
+                            tokio::try_join!(meter.transfer(client_read,proxy_write,Direction::Upload),meter.transfer(proxy_read,client_write,Direction::Download))?;
                             Ok(())
                         } => result,
                     };
@@ -96,7 +73,7 @@ pub(crate) struct UdpPacket {
     pub payload: Vec<u8>,
     pub address: Address,
 }
-type SessionKey = (u64, SocketAddrV4, u32);
+type SessionKey = (u64, SocketAddrV4, u64);
 
 async fn udp_session(
     first: UdpPacket,
@@ -110,14 +87,14 @@ async fn udp_session(
         socket,
     } = socks::Association::open(&first.route.group).await?;
     let owner = first.route.owner.clone();
+    let meter = shared
+        .traffic
+        .register(&owner.identity, &first.route.traffic_group);
     let local = first.local;
     let mut address = first.address;
     let first_payload = socks::encode_datagram(SocketAddr::V4(first.remote), &first.payload)?;
     socket.send(&first_payload).await?;
-    shared
-        .counters
-        .uploaded
-        .fetch_add(first.payload.len() as u64, Ordering::Relaxed);
+    meter.record(first.payload.len(), 0);
     let mut buffer = vec![0; 65535];
     let mut control_byte = [0; 1];
     let mut expiry = interval(Duration::from_secs(1));
@@ -132,7 +109,7 @@ async fn udp_session(
             packet = receiver.recv() => {
                 let Some(packet) = packet else { return Ok(()); }; address = packet.address;
                 socket.send(&socks::encode_datagram(SocketAddr::V4(packet.remote),&packet.payload)?).await?;
-                shared.counters.uploaded.fetch_add(packet.payload.len() as u64,Ordering::Relaxed); last_activity = tokio::time::Instant::now();
+                meter.record(packet.payload.len(), 0); last_activity = tokio::time::Instant::now();
             }
             received = socket.recv(&mut buffer) => {
                 let count = received?; let (remote,payload) = socks::decode_datagram(&buffer[..count])?;
@@ -141,7 +118,7 @@ async fn udp_session(
                 let mut packet = packet::udp_reply(remote,local,payload).context("UDP 回复超过 IPv4 长度限制")?;
                 let mut reply_address = address; reply_address.set_inbound();
                 network.recalculate(&mut packet,&mut reply_address)?; network.send(&packet,&reply_address)?;
-                shared.counters.downloaded.fetch_add(payload.len() as u64,Ordering::Relaxed); last_activity = tokio::time::Instant::now();
+                meter.record(0, payload.len()); last_activity = tokio::time::Instant::now();
             }
         }
     }
@@ -162,7 +139,7 @@ pub(crate) async fn udp_loop(
                 if let Ok((key,result)) = result { sessions.remove(&key); if let Err(error) = result { shared.error(format!("UDP 转发失败：{error:#}")); } }
             }
             packet = receiver.recv() => {
-                let Some(packet) = packet else { break; }; let key = (packet.route.owner.endpoint,packet.local,packet.route.group.id);
+                let Some(packet) = packet else { break; }; let key = (packet.route.owner.endpoint,packet.local,packet.route.traffic_group.generation());
                 if let Some(sender) = sessions.get(&key) {
                     if sender.try_send(packet).is_err() { shared.error("UDP 会话队列不可用，数据报已丢弃"); } continue;
                 }

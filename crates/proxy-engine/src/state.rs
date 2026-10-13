@@ -1,3 +1,4 @@
+use crate::traffic::{Traffic, TrafficGroup};
 use anyhow::{Result, bail};
 use proxy_core::{
     config::{Config, Protocol, ProxyGroup},
@@ -15,7 +16,7 @@ use std::{
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
 };
@@ -26,13 +27,12 @@ pub(crate) struct Counters {
     pub udp: AtomicU32,
     pub proxied: AtomicU64,
     pub direct: AtomicU64,
-    pub uploaded: AtomicU64,
-    pub downloaded: AtomicU64,
     pub parked: AtomicU64,
     pub timed_out: AtomicU64,
 }
 pub(crate) struct Shared {
     pub state: Mutex<State>,
+    pub traffic: Arc<Traffic>,
     pub counters: Counters,
     pub stopping: AtomicBool,
     pub last_error: Mutex<Option<String>>,
@@ -45,6 +45,7 @@ impl Shared {
     }
     pub fn stats(&self) -> EngineStats {
         let c = &self.counters;
+        let traffic = self.traffic.total();
         EngineStats {
             running: !self.stopping.load(Ordering::Acquire),
             elevated: proxy_platform::is_elevated(),
@@ -52,8 +53,8 @@ impl Shared {
             udp_sessions: c.udp.load(Ordering::Relaxed),
             proxied_packets: c.proxied.load(Ordering::Relaxed) as f64,
             direct_packets: c.direct.load(Ordering::Relaxed) as f64,
-            uploaded_bytes: c.uploaded.load(Ordering::Relaxed) as f64,
-            downloaded_bytes: c.downloaded.load(Ordering::Relaxed) as f64,
+            uploaded_bytes: traffic.uploaded_bytes,
+            downloaded_bytes: traffic.downloaded_bytes,
             parked_syns: c.parked.load(Ordering::Relaxed) as f64,
             timed_out_syns: c.timed_out.load(Ordering::Relaxed) as f64,
             last_error: self.last_error.lock().unwrap().clone(),
@@ -69,15 +70,20 @@ pub(crate) struct Reflection {
     pub alias: u16,
     pub timestamp: i64,
     pub group: ProxyGroup,
+    pub identity: ProcessIdentity,
+    pub traffic_group: TrafficGroup,
 }
 pub(crate) type ReverseKey = (Ipv4Addr, Ipv4Addr, u16);
 #[derive(Clone)]
 pub(crate) struct UdpRoute {
     pub owner: UdpOwner,
     pub group: ProxyGroup,
+    pub traffic_group: TrafficGroup,
 }
 
 pub(crate) struct State {
+    pub traffic: Arc<Traffic>,
+    traffic_groups: HashMap<u32, TrafficGroup>,
     pub config: Config,
     pub policy: RoutingPolicy,
     pub tree: ProcessTree,
@@ -93,7 +99,11 @@ impl State {
         let policy = RoutingPolicy::new(&config)?;
         let mut tree = ProcessTree::default();
         tree.synchronize(process::snapshot()?);
+        let traffic = Arc::new(Traffic::new(std::time::Instant::now()));
+        let traffic_groups = traffic.sync_groups(&config.proxy_groups);
         Ok(Self {
+            traffic,
+            traffic_groups,
             config,
             policy,
             tree,
@@ -128,6 +138,7 @@ impl State {
         if let Some((from, to)) = replacement {
             self.tree.reassign_group(from, to);
         }
+        self.traffic_groups = self.traffic.sync_groups(&config.proxy_groups);
         self.config = config;
         Ok(())
     }
@@ -185,7 +196,7 @@ impl State {
                             .allows_destination(r, *key.remote.ip(), key.remote.port())
                     });
                 self.flows
-                    .publish(key, event.endpoint, event.timestamp, route);
+                    .publish(key, event.endpoint, event.timestamp, route, identity);
             } else if event.kind == 7 {
                 self.flows.close(&key, event.endpoint);
             }
@@ -250,9 +261,12 @@ impl State {
                         .iter()
                         .find(|g| g.id == route.group_id)
                         .cloned()
-                        .map(|group| UdpRoute {
-                            owner: owner.clone(),
-                            group,
+                        .and_then(|group| {
+                            Some(UdpRoute {
+                                traffic_group: self.traffic_groups.get(&group.id)?.clone(),
+                                owner: owner.clone(),
+                                group,
+                            })
                         })
                 }),
         ))
@@ -266,7 +280,9 @@ impl State {
         route: &Route,
         address: proxy_platform::windivert::Address,
     ) -> Option<Reflection> {
-        let timestamp = self.flows.get(key)?.timestamp;
+        let decision = self.flows.get(key)?;
+        let timestamp = decision.timestamp;
+        let identity = decision.identity.clone()?;
         if let Some(existing) = self.reflections.get(key)
             && existing.timestamp == timestamp
         {
@@ -279,6 +295,7 @@ impl State {
             .iter()
             .find(|g| g.id == route.group_id)?
             .clone();
+        let traffic_group = self.traffic_groups.get(&group.id)?.clone();
         for _ in 1024..=u16::MAX {
             let alias = self.next_alias;
             self.next_alias = if alias == u16::MAX { 1024 } else { alias + 1 };
@@ -292,6 +309,8 @@ impl State {
                 alias,
                 timestamp,
                 group,
+                identity,
+                traffic_group,
             };
             self.reverse.insert(reverse, reflection.clone());
             self.expirations.insert(
