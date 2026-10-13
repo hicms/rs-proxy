@@ -180,6 +180,21 @@ try {
     await dialog().getByRole('textbox', { name: '名称 必填', exact: true }).fill('验证 A'); await saveDialog();
     await page.screenshot({ path: join(evidence, 'proxies.png') });
   });
+  await check('reconnect button closes old direct TCP and the same live process reconnects through upstream 7891', async () => {
+    await request({ kind: 'dns-open' });
+    await request({ kind: 'dns-query', id: 4900 });
+    await manual(ready.pid, '验证 A');
+    await request({ kind: 'dns-query', id: 4901 });
+    await button('重连已选代理').click();
+    await expect(dialog()).toContainText('1 个已选代理进程（全部分页）');
+    await dialog().getByRole('button', { name: '断开旧连接', exact: true }).click();
+    await expect(dialog()).toHaveCount(0);
+    await expect(page.getByText('已断开 1 条旧连接', { exact: true })).toBeVisible();
+    await expect.poll(async () => (await request({ kind: 'dns-state' })).closed).toBeTruthy();
+    assert.equal((await request({ kind: 'dns-state' })).pid, ready.pid);
+    await httpsThrough(observerA);
+    await page.screenshot({ path: join(evidence, 'reconnect-native.png') });
+  });
   await check('manual selection, real HTTPS payload counts and sampled rates through upstream 7891', async () => {
     await manual(ready.pid, '验证 A'); await httpsThrough(observerA);
     await expect.poll(async () => (await snapshot()).traffic.processes.find(item => item.identity.pid === ready.pid)?.total.download_bytes_per_second ?? 0).toBeGreaterThan(0);

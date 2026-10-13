@@ -167,7 +167,7 @@ impl State {
         }
         Ok(())
     }
-    fn route(&self, identity: &ProcessIdentity, protocol: Protocol) -> Option<Route> {
+    pub(crate) fn route(&self, identity: &ProcessIdentity, protocol: Protocol) -> Option<Route> {
         if identity.pid == std::process::id() {
             return None;
         }

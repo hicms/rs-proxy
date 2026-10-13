@@ -17,6 +17,7 @@ fn main() {
             commands::save_config,
             commands::set_engine_running,
             commands::set_process_proxy,
+            commands::reconnect_processes,
             commands::delete_group,
             commands::test_proxy,
             commands::get_autostart,

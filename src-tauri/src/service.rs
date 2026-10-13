@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use proxy_core::{
     config::Config,
-    model::{EngineStats, ProcessIdentity, Snapshot},
+    model::{EngineStats, ProcessIdentity, ReconnectResult, Snapshot},
     rules::RoutingPolicy,
     store::ConfigStore,
     tree::ProcessTree,
@@ -170,6 +170,16 @@ impl Service {
             .as_ref()
             .context("请先启动代理引擎")?
             .set_process_proxy(identity, group)
+    }
+    pub fn reconnect_processes(
+        &self,
+        identities: &[ProcessIdentity],
+        group_id: Option<u32>,
+    ) -> Result<ReconnectResult> {
+        self.engine
+            .as_ref()
+            .context("请先启动代理引擎")?
+            .reconnect_processes(identities, group_id)
     }
     pub async fn delete_group(&mut self, from: u32, to: u32, revision: u32) -> Result<Config> {
         let mut config = self.config().clone();

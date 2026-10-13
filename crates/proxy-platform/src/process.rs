@@ -59,6 +59,17 @@ fn identity(handle: &Handle, pid: u32) -> Result<ProcessIdentity> {
         sequence: sequence.to_string(),
     })
 }
+
+pub(crate) fn hold_identity(expected: &ProcessIdentity) -> Result<Option<Handle>> {
+    let handle = match Handle::new(unsafe {
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, expected.pid)
+    }) {
+        Ok(handle) => handle,
+        Err(error) if error.raw_os_error() == Some(87) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok((identity(&handle, expected.pid)? == *expected).then_some(handle))
+}
 fn command_line(handle: &Handle) -> Result<String> {
     let mut size = 0;
     unsafe {

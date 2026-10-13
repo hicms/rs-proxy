@@ -1,9 +1,11 @@
 use crate::desktop::Desktop;
 use proxy_core::{
     config::{Config, ProxyGroup},
-    model::{AutostartState, ProcessIcon, ProcessIdentity, ProxyTestResult, Snapshot},
+    model::{
+        AutostartState, ProcessIcon, ProcessIdentity, ProxyTestResult, ReconnectResult, Snapshot,
+    },
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 fn message(error: impl std::fmt::Display) -> String {
@@ -94,6 +96,24 @@ pub async fn delete_group(
         .delete_group(from, to, revision)
         .await
         .map_err(message)
+}
+#[tauri::command]
+pub async fn reconnect_processes(
+    app: AppHandle,
+    identities: Vec<ProcessIdentity>,
+    group_id: Option<u32>,
+) -> Result<ReconnectResult, String> {
+    tokio::task::spawn_blocking(move || {
+        app.state::<Desktop>()
+            .service
+            .blocking_lock()
+            .as_ref()
+            .map_err(Clone::clone)?
+            .reconnect_processes(&identities, group_id)
+            .map_err(message)
+    })
+    .await
+    .map_err(message)?
 }
 #[tauri::command]
 pub async fn test_proxy(group: ProxyGroup) -> Result<ProxyTestResult, String> {

@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use proxy_core::{
     config::Config,
-    model::{EngineStats, ProcessIdentity, Snapshot},
+    model::{EngineStats, ProcessIdentity, ReconnectResult, Snapshot},
 };
 use proxy_platform::{
     connections,
@@ -238,6 +238,13 @@ impl Engine {
             .lock()
             .unwrap()
             .override_process(identity, group)
+    }
+    pub fn reconnect_processes(
+        &self,
+        identities: &[ProcessIdentity],
+        group_id: Option<u32>,
+    ) -> Result<ReconnectResult> {
+        crate::reconnect::reconnect(&self.shared, identities, group_id)
     }
     pub async fn shutdown(&mut self) {
         self.begin_shutdown();

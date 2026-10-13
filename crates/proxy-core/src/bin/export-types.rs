@@ -1,6 +1,6 @@
 use proxy_core::{
     config::Config,
-    model::{AutostartState, ProcessIcon, ProxyTestResult, Snapshot},
+    model::{AutostartState, ProcessIcon, ProxyTestResult, ReconnectResult, Snapshot},
 };
 use ts_rs::TS;
 
@@ -11,5 +11,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ProcessIcon::export_all_to(&out)?;
     AutostartState::export_all_to(&out)?;
     ProxyTestResult::export_all_to(&out)?;
+    ReconnectResult::export_all_to(&out)?;
     Ok(())
 }

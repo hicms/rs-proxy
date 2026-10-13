@@ -111,3 +111,10 @@ pub struct ProxyTestResult {
     pub latency_ms: u32,
     pub message: String,
 }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct ReconnectResult {
+    pub disconnected: u32,
+    pub skipped: u32,
+    pub failures: Vec<String>,
+}

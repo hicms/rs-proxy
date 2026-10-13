@@ -14,7 +14,7 @@ export async function desktop(page: Page, options: { iconDelay?: number; process
   await page.addInitScript(({ snapshot, options, icons }) => {
     if (options.processCount) snapshot.processes = Array.from({ length: options.processCount }, (_, index) => ({ ...snapshot.processes[index % 3], process: { ...snapshot.processes[index % 3].process, identity: { pid: 100 + index, sequence: String(index + 1) } } }));
     const scope = window as unknown as Record<string, unknown>;
-    scope.iconCalls = []; scope.iconActive = 0; scope.iconMaxActive = 0; scope.snapshot = snapshot;
+    scope.iconCalls = []; scope.iconActive = 0; scope.iconMaxActive = 0; scope.snapshot = snapshot; scope.reconnectCalls = [];
     scope.isTauri = true;
     scope.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     scope.__TAURI_INTERNALS__ = {
@@ -53,6 +53,12 @@ export async function desktop(page: Page, options: { iconDelay?: number; process
           process.route = args.groupId === null ? null : { group_id: Number(args.groupId), rule_id: null, source: 'manual' }; return;
         }
         if (command === 'test_proxy') throw 'SOCKS5 连接被拒绝';
+        if (command === 'reconnect_processes') {
+          (scope.reconnectCalls as unknown[]).push(structuredClone(args));
+          if (scope.reconnectDelay) await new Promise(resolve => setTimeout(resolve, Number(scope.reconnectDelay)));
+          if (scope.reconnectError) throw scope.reconnectError;
+          return scope.reconnectResult ?? { disconnected: 2, skipped: 1, failures: [] };
+        }
         if (command === 'delete_group') {
           if (args.revision !== snapshot.config.revision) throw '配置已被更新';
           snapshot.config.proxy_groups = snapshot.config.proxy_groups.filter(group => group.id !== args.from);

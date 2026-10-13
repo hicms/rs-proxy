@@ -17,7 +17,8 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
-import { AppWindow, ArrowRight, RefreshCw, ListFilter, Network, Search, Undo2 } from 'lucide-react';
+import { AppWindow, ArrowRight, RefreshCw, ListFilter, Network, Search, Undo2, Unplug } from 'lucide-react';
+import { useAnnounce } from '@astryxdesign/core/hooks';
 import { GroupSelector, Editor } from '../components/Editor';
 import { Connections } from '../components/Connections';
 import { ProcessIcon } from '../components/ProcessIcon';
@@ -27,6 +28,8 @@ import { useAppModel, useAction } from '../model';
 import type { Snapshot } from '../bindings/Snapshot';
 import type { ProcessView } from '../bindings/ProcessView';
 import type { Route } from '../bindings/Route';
+import type { ProcessIdentity } from '../bindings/ProcessIdentity';
+import type { ReconnectResult } from '../bindings/ReconnectResult';
 
 function proxySource(route: Route | null, ruleNames: Map<string, string>) {
   if (!route) return '直连';
@@ -38,6 +41,9 @@ export default function Processes({ snapshot }: { snapshot: Snapshot }) {
   const [query, setQuery] = useState(''); const [scope, setScope] = useState('all'); const [tab, setTab] = useState('processes'); const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ProcessView>(); const [group, setGroup] = useState(snapshot.config.proxy_groups[0].id);
   const [groupFilter, setGroupFilter] = useState('all');
+  const [reconnect, setReconnect] = useState<{ identities: ProcessIdentity[]; groupId: number | null; scope: string }>();
+  const [reconnectResult, setReconnectResult] = useState<ReconnectResult>();
+  const announce = useAnnounce();
   const filterGroup = snapshot.config.proxy_groups.find(item => String(item.id) === groupFilter);
   if (groupFilter !== 'all' && !filterGroup) { setGroupFilter('all'); setPage(1); }
   const activeGroup = tab === 'processes' ? filterGroup : undefined;
@@ -47,6 +53,7 @@ export default function Processes({ snapshot }: { snapshot: Snapshot }) {
   const ruleNames = useMemo(() => new Map(snapshot.config.auto_rules.map(rule => [rule.id, rule.name])), [snapshot.config.auto_rules]);
   const currentSelection = selected && snapshot.processes.find(item => processKey(item.process.identity) === processKey(selected.process.identity));
   const rows = useMemo(() => snapshot.processes.filter(item => (scope !== 'proxied' || item.route) && (!filterGroup || item.route?.group_id === filterGroup.id) && `${item.process.name} ${item.process.identity.pid} ${item.process.image_path} ${item.process.cmdline}`.toLowerCase().includes(query.toLowerCase())), [snapshot.processes, query, scope, filterGroup]);
+  const reconnectTargets = rows.filter(item => item.route);
   const connections = useMemo(() => snapshot.connections.filter(item => `${item.pid} ${item.local_address} ${item.remote_address} ${item.protocol}`.toLowerCase().includes(query.toLowerCase())), [snapshot.connections, query]);
   const total = tab === 'processes' ? rows.length : connections.length; const current = Math.min(page, Math.max(1, Math.ceil(total / 50))); const start = (current - 1) * 50;
   const visibleProcesses = tab === 'processes' ? rows.slice(start, start + 50) : [];
@@ -59,7 +66,13 @@ export default function Processes({ snapshot }: { snapshot: Snapshot }) {
     { key: 'actions', header: '', align: 'end', renderCell: item => <IconButton label="详情与代理" tooltip="查看详情与代理设置" icon={<Icon icon={ArrowRight} />} variant="ghost" size="sm" onClick={() => { setSelected(item); setGroup(item.route?.group_id ?? snapshot.config.proxy_groups[0].id); }} /> },
   ];
   return <><Layout header={<LayoutHeader hasDivider><VStack gap={4}>
-    <HStack vAlign="center" hAlign="between" gap={3} wrap="wrap"><Heading level={1}>进程与连接</Heading><IconButton label="立即刷新" tooltip="立即刷新" icon={<Icon icon={RefreshCw} />} variant="ghost" onClick={() => void model.refresh()} /></HStack>
+    <HStack vAlign="center" hAlign="between" gap={3} wrap="wrap"><Heading level={1}>进程与连接</Heading><HStack gap={2} vAlign="center">
+      {tab === 'processes' && <Button label="重连已选代理" icon={<Icon icon={Unplug} />} isDisabled={!snapshot.stats.running || reconnectTargets.length === 0} tooltip={!snapshot.stats.running ? '请先启动代理引擎' : '断开当前筛选范围内需要切换到代理的旧连接'} onClick={() => setReconnect({ identities: reconnectTargets.map(item => item.process.identity), groupId: filterGroup?.id ?? null, scope: `${filterGroup?.name ?? '全部代理组'}${query ? ` · 搜索“${query}”` : ''}` })} />}
+      <IconButton label="立即刷新" tooltip="立即刷新" icon={<Icon icon={RefreshCw} />} variant="ghost" onClick={() => void model.refresh()} />
+    </HStack></HStack>
+    {reconnectResult && <Banner status={reconnectResult.failures.length ? 'warning' : reconnectResult.disconnected ? 'success' : 'info'} title={reconnectResult.disconnected ? `已断开 ${reconnectResult.disconnected} 条旧连接` : reconnectResult.failures.length ? '有连接未能处理' : '没有需要断开的旧连接'} description={`保留或已结束 ${reconnectResult.skipped} 条连接。${reconnectResult.failures.length ? `${reconnectResult.failures.length} 项未能处理。` : ''}${reconnectResult.disconnected ? '应用新建连接后将按当前规则使用代理；未自动恢复时，请刷新页面或重试。' : '已代理的连接会继续保留。'}`} isDismissable onDismiss={() => setReconnectResult(undefined)}>
+      {reconnectResult.failures.length > 0 && <TextArea label="未处理详情" value={reconnectResult.failures.join('\n')} isReadOnly rows={3} />}
+    </Banner>}
     <TrafficSummary stats={summary} label={`${activeGroup?.name ?? '全部代理组'} · 本次启动流量（仅代理）`} />
     <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap"><TabList value={tab} onChange={value => { setTab(value); setPage(1); }}><Tab value="processes" label="进程" icon={<Icon icon={AppWindow} />} /><Tab value="connections" label="连接" icon={<Icon icon={Network} />} /></TabList><Text type="supporting" color="secondary">{snapshot.stats.tcp_connections} TCP · {snapshot.stats.udp_sessions} UDP</Text></HStack>
     <HStack vAlign="center" gap={3} wrap="wrap"><StackItem size="fill"><TextInput label="搜索进程、PID 或地址" isLabelHidden placeholder="搜索应用、PID 或地址…" value={query} onChange={value => { setQuery(value); setPage(1); }} startIcon="search" hasClear /></StackItem>
@@ -79,6 +92,17 @@ export default function Processes({ snapshot }: { snapshot: Snapshot }) {
       <GroupSelector groups={snapshot.config.proxy_groups} value={group} onChange={setGroup} />
       <Button label="移除手动选择，使用自动规则" icon={<Icon icon={Undo2} />} variant="ghost" isLoading={action.busy} onClick={() => void action.run(async () => { await invoke('set_process_proxy', { identity: selected.process.identity, groupId: null }); await model.refresh(); setSelected(undefined); })} />
       <Heading level={3}>当前连接</Heading><Connections data={snapshot.connections.filter(item => item.pid === selected.process.identity.pid)} />
+    </Editor>}
+    {reconnect && <Editor title="重连已选代理" saveLabel="断开旧连接" onClose={() => setReconnect(undefined)} onSave={async () => {
+      const result = await invoke<ReconnectResult>('reconnect_processes', { identities: reconnect.identities, groupId: reconnect.groupId });
+      setReconnectResult(result);
+      announce(`已断开 ${result.disconnected} 条旧连接，${result.failures.length} 项未能处理`);
+      await model.refresh();
+    }}>
+      <Text weight="semibold">{reconnect.scope} · {reconnect.identities.length} 个已选代理进程（全部分页）</Text>
+      <Text>仅断开这些进程中符合当前代理规则的旧直连连接。进程会继续运行，已代理的连接会保留。</Text>
+      <Banner status="warning" title="连接会短暂中断" description="下载、通话等任务可能需要重试。应用重新建立连接后才会走代理；如果未自动恢复，请刷新页面或重试。" />
+      <Text type="supporting" color="secondary">仅处理 IPv4 TCP 连接，不处理 UDP 和 IPv6。此操作使用已生效的代理设置。</Text>
     </Editor>}
   </>;
 }
