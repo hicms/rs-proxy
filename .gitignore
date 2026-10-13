@@ -1,0 +1,13 @@
+/.plan/
+/node_modules/
+/dist/
+/target/
+/src-tauri/target/
+/src-tauri/gen/
+/test-results/
+/playwright-report/
+*.log
+.env
+.env.*
+!.env.example
+!/src-tauri/resources/windivert/WinDivert.dll

@@ -1,0 +1,27 @@
+[package]
+name = "rs-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "rs-proxy"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.2", features = ["tray-icon", "image-ico"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tracing-appender = "0.2"
+proxy-core = { path = "../crates/proxy-core" }
+proxy-platform = { path = "../crates/proxy-platform" }
+proxy-engine = { path = "../crates/proxy-engine" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile.workspace = true

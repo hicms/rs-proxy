@@ -1,0 +1,89 @@
+# RS Proxy
+
+Windows 上的进程级 SOCKS5 代理工具。Rust 负责网络和系统集成，Tauri 2 提供桌面窗口，React 界面直接使用 Astryx 官方组件、Neutral 主题和布局模板。
+
+## 使用
+
+1. 以管理员身份启动 RS Proxy。
+2. 在「代理组」中填写 SOCKS5 主机和端口，点击「测试连接」验证无认证握手。
+3. 在「进程与连接」中搜索进程，打开「详情与代理」，将代理组应用到该进程及其后代。
+4. 或在「路由规则」中创建并启用规则。规则从上到下匹配，手动选择优先。
+
+默认没有启用的规则，DNS 转发默认关闭。应用不会修改系统代理或路由表。关闭按钮默认收起到托盘；从托盘选择「退出」会停止引擎并恢复本应用设置的 DNS。
+
+规则可同时约束进程名、程序路径前缀、命令行、协议、目标网段和端口。进程名支持 `*` / `?`；命令行的普通关键词需全部命中，含通配符时按完整模式匹配。排除条件优先于包含条件。配置更新作用于新 TCP 连接；已有 TCP 连接继续使用建立时的代理组。
+
+## 开发环境
+
+- Windows 10/11 x64、WebView2 Runtime。
+- Rust 1.94 或更新版本，MSVC 工具链；Visual Studio Build Tools 的 C++ 桌面开发组件与 Windows SDK。
+- Node.js 22.13 或更新版本，npm。
+- 运行桌面程序和平台集成测试时需要管理员权限。
+
+```powershell
+npm ci
+pwsh -File scripts/prepare-windivert.ps1
+npm run desktop
+```
+
+WinDivert 官方 x64 DLL、签名驱动和许可已随工程提供。准备脚本可重新下载并验证固定版本的 SHA256 和驱动签名。
+
+```powershell
+npm run build
+npm run desktop:build -- --debug
+npm run tauri -- build --bundles nsis
+```
+
+调试程序位于 `target/debug/rs-proxy.exe`，发布程序位于 `target/release/rs-proxy.exe`，NSIS 安装包位于 `target/release/bundle/nsis/`。分发便携程序时须同时保留 `windivert/` 和许可证资源；建议使用安装包。
+
+仅运行 `npm run dev` 可以查看界面，但浏览器没有 Windows 服务，页面会明确显示未连接。
+
+## 配置与恢复
+
+数据目录是 `%LOCALAPPDATA%\dev.rsproxy.desktop`：
+
+- `config.json`：代理组、规则和设置，原子写入并检查修订号。配置损坏时不会覆盖原文件。
+- `dns-recovery.json`：DNS 变更前保存的恢复记录。每个接口恢复成功后才移除相应记录，全部恢复后删除文件；下次启动会先处理未完成恢复。
+- `logs/`：按日生成日志，保留最近 7 份。日志级别下次启动生效。
+
+设置页可导入/导出 JSON。删除代理组时必须指定替换组；规则、DNS 和手动选择在配置保存成功后一起更新。
+
+DNS 转发使用本地 IPv4 回环地址的 53 端口，将 UDP/TCP DNS 查询转换为经 SOCKS5 的 TCP 查询。启用时会更改活动 IPv4 接口的 DNS；停止引擎或正常退出时恢复原值。若系统拒绝恢复，应用保留转发器和恢复记录，并显示错误；解决接口问题后重试停止或退出。强制结束应用后，应重新启动以执行恢复。
+
+自动启动使用当前 Windows 用户的登录计划任务，以管理员权限运行；可选择启动后收起到托盘。
+
+## 支持范围
+
+- 透明转发 IPv4 TCP 与未分片 UDP。IPv6、ICMP 和 IPv4 分片保持直连。
+- SOCKS5 无认证。UDP 要求服务器支持 UDP ASSOCIATE；不支持 SOCKS UDP 分片。
+- 已建立的 TCP 连接不会被重新接管，需由应用重新建立连接。
+- 受保护进程的路径或命令行可能无法读取，对应匹配条件不会凭空补全。
+- 首包归属等待默认 20ms；超过等待窗口的 TCP 连接固定直连，避免重传中改变去向。它不是用于阻止所有直连流量的防火墙。
+- 验证覆盖当前 Windows x64 环境；其它 Windows 版本、长期持续运行和极端负载尚需进一步验证。
+
+## 验证与维护
+
+```powershell
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+npm run build
+npm test
+npm run astryx -- doctor
+```
+
+浏览器测试使用已安装的 Microsoft Edge；截图和跟踪写入系统临时目录。透明代理测试启动独立受控进程及本地 SOCKS5 测试服务，目标使用 `198.19.99.0/24`，不依赖外部服务。
+
+真实 DNS 设置测试默认跳过，显式执行会短暂更改活动接口的 DNS，并在断言前恢复：
+
+```powershell
+$env:RS_PROXY_SYSTEM_DNS_TEST = '1'
+try { cargo test -p proxy-platform --test system_dns -- --ignored --nocapture }
+finally { Remove-Item Env:RS_PROXY_SYSTEM_DNS_TEST }
+```
+
+生成前端 Rust 类型：`cargo run -p proxy-core --bin export-types`。前端新增页面先使用 Astryx CLI 的 `build`、`template` 和 `component` 命令，不另建组件样式体系。字体从本地 Figtree 文件加载；doctor 的字体警告来自它对官方远程字体 CSS 的静态检查，Vite 会将其替换为本地字体入口。
+
+目录职责：`crates/proxy-core` 管理领域和配置；`crates/proxy-platform` 封装 Windows；`crates/proxy-engine` 管理代理会话；`src-tauri` 组合桌面生命周期与命令；`src` 实现 Astryx 界面。
+
+代码采用 MIT 许可。第三方资源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -1,0 +1,57 @@
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import type { Config } from './bindings/Config';
+import type { Snapshot } from './bindings/Snapshot';
+
+export function useModel() {
+  const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [error, setError] = useState('');
+  const loading = useRef(false);
+  const refresh = useCallback(async () => {
+    if (loading.current) return;
+    if (!isTauri()) { setError('请在 RS Proxy 桌面应用中连接代理引擎。'); return; }
+    loading.current = true;
+    try { setSnapshot(await invoke<Snapshot>('get_snapshot')); setError(''); }
+    catch (error) { setError(String(error)); }
+    finally { loading.current = false; }
+  }, []);
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 2000);
+    const listener = isTauri() ? listen<string>('service-error', event => setError(event.payload)) : undefined;
+    return () => { clearInterval(timer); void listener?.then(unlisten => unlisten()); };
+  }, [refresh]);
+  const save = useCallback(async (config: Config) => {
+    const saved = await invoke<Config>('save_config', { config });
+    setSnapshot(previous => previous && ({ ...previous, config: saved }));
+    await refresh();
+  }, [refresh]);
+  return { snapshot, error, refresh, save };
+}
+export type Model = ReturnType<typeof useModel>;
+export const ModelContext = createContext<Model | null>(null);
+export function useAppModel() {
+  const model = useContext(ModelContext);
+  if (!model) throw new Error('缺少应用状态');
+  return model;
+}
+export function useAction() {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const active = useRef(false);
+  const run = async (action: () => Promise<unknown>) => {
+    if (active.current) return false;
+    active.current = true; setBusy(true); setError('');
+    try { await action(); return true; }
+    catch (error) { setError(String(error)); return false; }
+    finally { active.current = false; setBusy(false); }
+  };
+  return { error, busy, run };
+}
+export const lines = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
+export function bytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+}
