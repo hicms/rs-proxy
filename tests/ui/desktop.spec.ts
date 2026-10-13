@@ -20,12 +20,17 @@ async function desktop(page: Page) {
         if (command.startsWith('plugin:event|')) return 1;
         if (command === 'get_snapshot') return structuredClone(snapshot);
         if (command === 'save_config') {
+          if (scope.saveDelay) await new Promise(resolve => setTimeout(resolve, Number(scope.saveDelay)));
           const config = args.config as typeof snapshot.config;
           if (config.auto_rules.some(rule => !rule.name || (!rule.process_name && !rule.image_path_pattern && !rule.cmdline_pattern))) throw '规则至少需要一个进程匹配条件';
           if (config.revision !== snapshot.config.revision) throw '配置已被更新';
           snapshot.config = { ...config, revision: config.revision + 1 }; return snapshot.config;
         }
-        if (command === 'get_autostart' || command === 'set_autostart') return { enabled: false, start_minimized: false };
+        if (command === 'get_autostart') return scope.autostart ?? { enabled: false, start_minimized: false };
+        if (command === 'set_autostart') {
+          if (scope.saveDelay) await new Promise(resolve => setTimeout(resolve, Number(scope.saveDelay)));
+          return scope.autostart = { enabled: args.enabled, start_minimized: args.startMinimized };
+        }
         if (command === 'set_engine_running') { snapshot.stats.running = Boolean(args.running); return; }
         if (command === 'set_process_proxy') {
           const id = args.identity as { pid: number; sequence: string };
@@ -51,7 +56,46 @@ async function desktop(page: Page) {
 test('browser mode explains that a desktop service is required', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '无法读取桌面服务' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '启动引擎', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动代理', exact: true })).toBeDisabled();
+});
+
+test('settings stay locked until an asynchronous save settles', async ({ page }) => {
+  await desktop(page);
+  await page.evaluate(() => { (window as unknown as Record<string, unknown>).saveDelay = 2500; });
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await page.getByRole('combobox', { name: '主题' }).click();
+  await page.getByRole('option', { name: '深色', exact: true }).click();
+  await page.getByRole('button', { name: '保存设置' }).click();
+  await page.getByRole('link', { name: '进程与连接', exact: true }).click();
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: '主题' })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '关闭窗口时收起到托盘' })).toBeDisabled();
+  await page.getByRole('button', { name: '网络', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '全局排除网段' })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: '代理组' })).toBeDisabled();
+  await page.getByRole('button', { name: '高级', exact: true }).click();
+  await expect(page.getByRole('spinbutton', { name: '首包等待时间' })).toBeDisabled();
+  await expect(page.getByRole('spinbutton', { name: '首包等待时间' })).toBeEnabled();
+  await page.getByRole('button', { name: '常规', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: '主题' })).toContainText('深色');
+  await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled();
+});
+
+test('startup changes remain locked after leaving and returning to settings', async ({ page }) => {
+  await desktop(page);
+  await page.evaluate(() => { (window as unknown as Record<string, unknown>).saveDelay = 2000; });
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await page.getByRole('checkbox', { name: '登录 Windows 时启动' }).check();
+  await page.getByRole('button', { name: '应用启动设置' }).click();
+  await expect(page.getByRole('checkbox', { name: '登录 Windows 时启动' })).toBeDisabled();
+  await page.getByRole('button', { name: '网络', exact: true }).click();
+  await page.getByRole('button', { name: '常规', exact: true }).click();
+  await expect(page.getByRole('button', { name: '读取启动设置' })).toBeDisabled();
+  await page.getByRole('link', { name: '进程与连接', exact: true }).click();
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('button', { name: '读取启动设置' })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '登录 Windows 时启动' })).toBeChecked();
+  await expect(page.getByRole('button', { name: '应用启动设置' })).toBeDisabled();
 });
 
 test('proxy CRUD and rule priority actions reach the saved configuration', async ({ page }) => {
@@ -113,9 +157,11 @@ test('process identity, rule editing, proxy errors, theme and narrow layout', as
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '包含目标端口' })).toHaveValue('443\n8443');
   await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-rules.png') });
   await page.getByRole('link', { name: '代理组', exact: true }).click();
   await page.getByRole('button', { name: '测试连接' }).click();
   await expect(page.getByText('SOCKS5 连接被拒绝')).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-proxies.png') });
   await page.getByRole('link', { name: '设置', exact: true }).click();
   await page.getByRole('combobox', { name: '主题' }).click();
   await page.getByRole('option', { name: '深色', exact: true }).click();

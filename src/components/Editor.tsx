@@ -4,6 +4,8 @@ import { Layout, LayoutContent, LayoutFooter, HStack, VStack } from '@astryxdesi
 import { Button } from '@astryxdesign/core/Button';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Selector } from '@astryxdesign/core/Selector';
+import { Icon } from '@astryxdesign/core/Icon';
+import { Check, Trash2 } from 'lucide-react';
 import type { ProxyGroup } from '../bindings/ProxyGroup';
 import { useAction } from '../model';
 
@@ -17,10 +19,10 @@ export function Editor({ title, children, onClose, onSave, saveLabel = '保存',
       content={<LayoutContent><VStack gap={4}>{action.error && <Banner status="error" title="操作未完成" description={action.error} />}{children}</VStack></LayoutContent>}
       footer={<LayoutFooter hasDivider><HStack gap={2} hAlign="end">
         <Button label="取消" onClick={close} isDisabled={action.busy} />
-        <Button label={saveLabel} variant={destructive ? 'destructive' : 'primary'} isLoading={action.busy} onClick={() => void action.run(onSave).then(saved => { if (saved) onClose(); })} />
+        <Button label={saveLabel} icon={<Icon icon={destructive ? Trash2 : Check} />} variant={destructive ? 'destructive' : 'primary'} isLoading={action.busy} onClick={() => void action.run(onSave).then(saved => { if (saved) onClose(); })} />
       </HStack></LayoutFooter>} />
   </Dialog>;
 }
-export function GroupSelector({ groups, value, onChange, label = '代理组' }: { groups: ProxyGroup[]; value: number; onChange: (value: number) => void; label?: string }) {
-  return <Selector label={label} value={String(value)} width="100%" options={groups.map(group => ({ value: String(group.id), label: group.name }))} onChange={value => onChange(Number(value))} />;
+export function GroupSelector({ groups, value, onChange, label = '代理组', isDisabled = false }: { groups: ProxyGroup[]; value: number; onChange: (value: number) => void; label?: string; isDisabled?: boolean }) {
+  return <Selector label={label} value={String(value)} isDisabled={isDisabled} width="100%" options={groups.map(group => ({ value: String(group.id), label: group.name }))} onChange={value => onChange(Number(value))} />;
 }

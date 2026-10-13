@@ -16,3 +16,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[[example]]
+name = "check-live-proxy"
+path = "tests/support/live_proxy.rs"

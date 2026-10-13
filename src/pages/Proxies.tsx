@@ -8,6 +8,9 @@ import { Button } from '@astryxdesign/core/Button';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
 import { Banner } from '@astryxdesign/core/Banner';
+import { Icon } from '@astryxdesign/core/Icon';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { Plus, Pencil, Trash2, Radio, Server } from 'lucide-react';
 import { Editor, GroupSelector } from '../components/Editor';
 import { useAction, useAppModel } from '../model';
 import type { Config } from '../bindings/Config';
@@ -27,18 +30,18 @@ export default function Proxies({ config }: { config: Config }) {
   const model = useAppModel(); const action = useAction(); const [results, setResults] = useState<Record<number, string>>({});
   const [editing, setEditing] = useState<{ config: Config; group: ProxyGroup }>(); const [deleting, setDeleting] = useState<ProxyGroup>(); const [replacement, setReplacement] = useState(0);
   const columns: TableColumn<ProxyGroup>[] = [
-    { key: 'name', header: '名称', width: proportional(2), renderCell: group => <Text weight="semibold">{group.name}</Text> },
+    { key: 'name', header: '代理组', width: proportional(2), renderCell: group => <HStack gap={3} vAlign="center"><Icon icon={Server} color="secondary" /><Text weight="semibold">{group.name}</Text></HStack> },
     { key: 'host', header: 'SOCKS5 服务器', width: proportional(2), renderCell: group => <Text type="code">{group.host}:{group.port}</Text> },
     { key: 'references', header: '规则引用', renderCell: group => <Text>{config.auto_rules.filter(rule => rule.proxy_group_id === group.id).length}</Text> },
     { key: 'test', header: '最近测试', width: proportional(2), renderCell: group => <Text type="supporting">{results[group.id] ?? '尚未测试'}</Text> },
-    { key: 'actions', header: '操作', width: proportional(3), renderCell: group => <HStack gap={2} wrap="wrap"><Button label="测试连接" size="sm" isDisabled={action.busy} onClick={() => void action.run(async () => { try { const result = await invoke<ProxyTestResult>('test_proxy', { group }); setResults(previous => ({ ...previous, [group.id]: `${result.latency_ms} ms · 握手成功` })); } catch (error) { setResults(previous => ({ ...previous, [group.id]: '测试失败' })); throw error; } })} /><Button label="编辑" size="sm" onClick={() => setEditing({ config, group })} /><Button label="删除" size="sm" variant="ghost" isDisabled={config.proxy_groups.length === 1} onClick={() => { setDeleting(group); setReplacement(config.proxy_groups.find(item => item.id !== group.id)!.id); }} /></HStack> },
+    { key: 'actions', header: '', width: proportional(2), renderCell: group => <HStack gap={1} hAlign="end"><IconButton label="测试连接" tooltip="测试连接" icon={<Icon icon={Radio} />} variant="ghost" size="sm" isDisabled={action.busy} onClick={() => void action.run(async () => { try { const result = await invoke<ProxyTestResult>('test_proxy', { group }); setResults(previous => ({ ...previous, [group.id]: `${result.latency_ms} ms · 已连接` })); } catch (error) { setResults(previous => ({ ...previous, [group.id]: '连接失败' })); throw error; } })} /><IconButton label="编辑" tooltip="编辑代理组" icon={<Icon icon={Pencil} />} variant="ghost" size="sm" onClick={() => setEditing({ config, group })} /><IconButton label="删除" tooltip="删除代理组" icon={<Icon icon={Trash2} />} variant="ghost" size="sm" isDisabled={config.proxy_groups.length === 1} onClick={() => { setDeleting(group); setReplacement(config.proxy_groups.find(item => item.id !== group.id)!.id); }} /></HStack> },
   ];
-  return <><Layout header={<LayoutHeader hasDivider><HStack vAlign="center" hAlign="between" gap={3} wrap="wrap"><VStack gap={1}><Heading level={1}>代理组</Heading><Text color="secondary">为不同进程选择 SOCKS5 服务器。</Text></VStack><Button label="新建代理组" variant="primary" onClick={() => setEditing({ config, group: { id: Math.max(...config.proxy_groups.map(group => group.id)) + 1, name: '', host: '127.0.0.1', port: 7890 } })} /></HStack></LayoutHeader>}
+  return <><Layout header={<LayoutHeader hasDivider><HStack vAlign="center" hAlign="between" gap={3} wrap="wrap"><Heading level={1}>代理组</Heading><Button label="新建代理组" icon={<Icon icon={Plus} />} variant="primary" onClick={() => setEditing({ config, group: { id: Math.max(...config.proxy_groups.map(group => group.id)) + 1, name: '', host: '127.0.0.1', port: 7890 } })} /></HStack></LayoutHeader>}
     content={<LayoutContent><VStack gap={4}>{action.error && <Banner status="error" title="代理操作失败" description={action.error} />}<Table data={config.proxy_groups} columns={columns} idKey="id" hasHover /></VStack></LayoutContent>} />
     {editing && <ProxyEditor config={editing.config} initial={editing.group} onClose={() => setEditing(undefined)} />}
-    {deleting && <Editor title="删除代理组" saveLabel="替换引用并删除" destructive onClose={() => setDeleting(undefined)} onSave={async () => {
+    {deleting && <Editor title="删除代理组" saveLabel="替换引用并删除" destructive onClose={() => setDeleting(undefined)} onSave={() => model.changeConfig(async () => {
       await invoke('delete_group', { from: deleting.id, to: replacement, revision: config.revision });
       await model.refresh();
-    }}><Text>将「{deleting.name}」的手动选择、规则和 DNS 引用改用以下代理组，然后删除此组。已有 TCP 连接会继续使用原服务器。</Text><GroupSelector label="替换为" groups={config.proxy_groups.filter(group => group.id !== deleting.id)} value={replacement} onChange={setReplacement} /></Editor>}
+    })}><Text>将「{deleting.name}」的手动选择、规则和 DNS 引用改用以下代理组，然后删除此组。已有 TCP 连接会继续使用原服务器。</Text><GroupSelector label="替换为" groups={config.proxy_groups.filter(group => group.id !== deleting.id)} value={replacement} onChange={setReplacement} /></Editor>}
   </>;
 }

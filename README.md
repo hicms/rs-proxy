@@ -72,15 +72,21 @@ npm test
 npm run astryx -- doctor
 ```
 
-浏览器测试使用已安装的 Microsoft Edge；截图和跟踪写入系统临时目录。透明代理测试启动独立受控进程及本地 SOCKS5 测试服务，目标使用 `198.19.99.0/24`，不依赖外部服务。
+浏览器测试使用已安装的 Microsoft Edge 和模拟桌面 IPC，验证界面交互与窄窗口布局。Rust 透明代理集成测试启动独立受控进程及本地 SOCKS5 测试服务，目标使用 `198.19.99.0/24`，不依赖外部服务。
 
-真实 DNS 设置测试默认跳过，显式执行会短暂更改活动接口的 DNS，并在断言前恢复：
+实际代理与原生桌面验收：
 
 ```powershell
-$env:RS_PROXY_SYSTEM_DNS_TEST = '1'
-try { cargo test -p proxy-platform --test system_dns -- --ignored --nocapture }
-finally { Remove-Item Env:RS_PROXY_SYSTEM_DNS_TEST }
+npm run test:proxy -- 127.0.0.1:7891
+npm run test:native
+npm run test:installer
 ```
+
+`test:proxy` 使用生产协议代码执行真实 TCP/UDP 查询，并在随机回环端口验证 DNS 转发。`test:native` 需要管理员权限、可用的 `127.0.0.1:7891` SOCKS5 服务和公网连接；先退出 RS Proxy，避免两套引擎并发。它每次将带本地调试端口的 QA 程序构建到独立的 `target/native-e2e/`，使用真实 Tauri IPC、独立网络子进程和透明字节观察器，验证进程路由、规则、设置、原生文件对话框和桌面生命周期；测试配置与日常配置分开，并恢复自动启动任务。证据写入 `%TEMP%/rs-proxy-e2e/`。公网超时按失败记录，不能用浏览器模拟测试代替。
+
+以上命令均不切换系统 DNS。原生测试始终保持 DNS 关闭，并比较运行前后的网卡 DNS；真实系统 DNS 写入测试默认忽略。随机端口转发通过不代表系统 DNS 接管已验证。
+
+`test:installer` 验证已构建的 NSIS 安装包，要求没有现有 RS Proxy 安装注册，且日常配置已存在并关闭 DNS。它安装到随机临时目录，检查资源、启动与正常退出，再卸载并核对配置与 DNS 基线；测试期间会暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节。
 
 生成前端 Rust 类型：`cargo run -p proxy-core --bin export-types`。前端新增页面先使用 Astryx CLI 的 `build`、`template` 和 `component` 命令，不另建组件样式体系。字体从本地 Figtree 文件加载；doctor 的字体警告来自它对官方远程字体 CSS 的静态检查，Vite 会将其替换为本地字体入口。
 

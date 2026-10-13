@@ -3,10 +3,20 @@ import { listen } from '@tauri-apps/api/event';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { Config } from './bindings/Config';
 import type { Snapshot } from './bindings/Snapshot';
+import type { AutostartState } from './bindings/AutostartState';
 
 export function useModel() {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [error, setError] = useState('');
+  const [pendingChanges, setPendingChanges] = useState(0);
+  const [changingAutostart, setChangingAutostart] = useState(false);
+  const autostartActive = useRef(false);
+  const setAutostart = useCallback(async (state: AutostartState) => {
+    if (autostartActive.current) throw new Error('启动设置正在保存');
+    autostartActive.current = true; setChangingAutostart(true);
+    try { return await invoke<AutostartState>('set_autostart', { enabled: state.enabled, startMinimized: state.start_minimized }); }
+    finally { autostartActive.current = false; setChangingAutostart(false); }
+  }, []);
   const loading = useRef(false);
   const refresh = useCallback(async () => {
     if (loading.current) return;
@@ -22,12 +32,17 @@ export function useModel() {
     const listener = isTauri() ? listen<string>('service-error', event => setError(event.payload)) : undefined;
     return () => { clearInterval(timer); void listener?.then(unlisten => unlisten()); };
   }, [refresh]);
-  const save = useCallback(async (config: Config) => {
+  const changeConfig = useCallback(async <T>(action: () => Promise<T>): Promise<T> => {
+    setPendingChanges(count => count + 1);
+    try { return await action(); }
+    finally { setPendingChanges(count => count - 1); }
+  }, []);
+  const save = useCallback((config: Config) => changeConfig(async () => {
     const saved = await invoke<Config>('save_config', { config });
     setSnapshot(previous => previous && ({ ...previous, config: saved }));
     await refresh();
-  }, [refresh]);
-  return { snapshot, error, refresh, save };
+  }), [refresh, changeConfig]);
+  return { snapshot, error, refresh, save, changeConfig, changingConfig: pendingChanges > 0, setAutostart, changingAutostart };
 }
 export type Model = ReturnType<typeof useModel>;
 export const ModelContext = createContext<Model | null>(null);
