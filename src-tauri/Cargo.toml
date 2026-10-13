@@ -8,10 +8,12 @@ default-run = "rs-proxy"
 [[bin]]
 name = "rs-proxy"
 path = "src/main.rs"
+required-features = ["desktop"]
 test = false
 bench = false
 
 [features]
+desktop = []
 platform-tests = ["proxy-engine/platform-tests"]
 
 [build-dependencies]

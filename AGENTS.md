@@ -6,6 +6,7 @@
 - Keep implementation plans under ignored `.plan/`. Update the execution ledger after each task and validate before a local commit.
 - Describe RS Proxy as an independent product. Do not include external application history, repository paths, or source relationships in code, comments, docs, plans, or commit messages. Retain required third-party license notices.
 - Run `npm run build`, `npm run astryx -- doctor`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` before delivery.
+- The desktop binary requires the `desktop` feature, enabled by the Tauri CLI configuration. Also run `cargo clippy --workspace --all-targets --features rs-proxy/desktop -- -D warnings` to check desktop commands and lifecycle code. Use `npm run desktop:build -- --debug` for a standalone debug executable; ordinary Cargo tests must leave that artifact unchanged. Verify the existing executable with `npm run test:standalone` when changing desktop startup or packaging.
 
 <!-- ASTRYX:START -->
 Astryx v0.7.0 · 168 components

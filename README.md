@@ -42,6 +42,8 @@ npm run tauri -- build --bundles nsis
 
 调试程序位于 `target/debug/rs-proxy.exe`，发布程序位于 `target/release/rs-proxy.exe`，NSIS 安装包位于 `target/release/bundle/nsis/`。分发便携程序时须同时保留 `windivert/` 和许可证资源；建议使用安装包。
 
+`desktop:build` 生成的程序内置界面，直接打开即可使用。`npm run desktop` 用于开发，会启动并依赖本地前端服务器。桌面二进制需要 `desktop` 特性，Tauri CLI 已自动启用；默认 `cargo test --workspace` 不构建桌面二进制，避免覆盖已打包程序。检查桌面入口代码时使用 `cargo clippy --workspace --all-targets --features rs-proxy/desktop -- -D warnings`。
+
 仅运行 `npm run dev` 可以查看界面，但浏览器没有 Windows 服务，页面会明确显示未连接。
 
 ## 配置与恢复
@@ -88,6 +90,7 @@ npm run astryx -- doctor
 cargo test --workspace --features rs-proxy/platform-tests
 npm run test:proxy -- 127.0.0.1:7891
 npm run test:native
+npm run test:standalone
 npm run test:installer
 ```
 
@@ -96,6 +99,8 @@ npm run test:installer
 以上命令均不切换系统 DNS。原生测试始终保持 DNS 关闭，并比较运行前后的网卡 DNS；测试集中不包含系统 DNS 写入用例。随机端口转发通过不代表系统 DNS 接管已验证。
 
 `test:installer` 验证已构建的 NSIS 安装包，要求没有现有 RS Proxy 安装注册，且日常配置已存在并关闭 DNS。它安装到随机临时目录，检查资源、启动与正常退出，再卸载并核对配置与 DNS 基线；测试期间会暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节。
+
+`test:standalone` 直接启动已有的 `target/debug/rs-proxy.exe`，不重新构建；通过 Windows UI Automation 验证无开发服务器时的内置页面、重连按钮和引擎运行状态，再正常退出。要求管理员权限、没有运行中的 RS Proxy，且日常配置已存在并关闭 DNS；测试期间暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节，并核对配置、DNS 和可执行文件哈希。可用 `npm run test:standalone -- -Executable target/release/rs-proxy.exe` 验证发布程序。
 
 生成前端 Rust 类型：`cargo run -p proxy-core --bin export-types`。前端新增页面先使用 Astryx CLI 的 `build`、`template` 和 `component` 命令，不另建组件样式体系。字体从本地 Figtree 文件加载；doctor 的字体警告来自它对官方远程字体 CSS 的静态检查，Vite 会将其替换为本地字体入口。
 

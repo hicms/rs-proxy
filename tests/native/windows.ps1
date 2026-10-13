@@ -36,6 +36,31 @@ if ($Action -eq 'close') {
   [NativeWindows]::PostMessage($main[0], 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
   exit
 }
+if ($Action -eq 'page') {
+  $scope = [System.Windows.Automation.TreeScope]::Descendants
+  $expected = $Value | ConvertFrom-Json
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+    $main = @([NativeWindows]::ForProcess($ProcessId) | Where-Object { [NativeWindows]::Title($_) -eq 'RS Proxy' })
+    if ($main.Count -eq 1) {
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($main[0])
+      $elements = @($root.FindAll($scope, [System.Windows.Automation.Condition]::TrueCondition))
+      $names = @($elements | ForEach-Object { $_.Current.Name })
+      if ($names -contains 'ERR_CONNECTION_REFUSED') { throw 'Desktop loaded a connection-refused error page.' }
+      if (@($expected | Where-Object { $names -notcontains $_ }).Count -eq 0) {
+        $documents = @($elements | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Document })
+        $urls = @($documents | ForEach-Object {
+          $pattern = $null
+          if ($_.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { $pattern.Current.Value }
+        })
+        if (-not @($urls | Where-Object { $_ -like 'http://tauri.localhost/*' }).Count) { throw "Expected bundled document URL, found: $urls" }
+        @{ bundledUrl=$urls; requiredControls=$expected; connected=$true } | ConvertTo-Json -Compress
+        exit
+      }
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  throw 'Standalone page did not show the expected controls.'
+}
 if ($Action -eq 'file' -or $Action -eq 'cancel' -or $Action -eq 'controls') {
   for ($attempt = 0; $attempt -lt 50; $attempt++) {
     $dialog = @([NativeWindows]::ForProcess($ProcessId) | Where-Object { [NativeWindows]::Class($_) -eq '#32770' -and [NativeWindows]::IsWindowVisible($_) })
