@@ -116,3 +116,19 @@ fn connect_before_reused_syn_preserves_both_generations() {
         "2"
     );
 }
+
+#[test]
+fn flow_retains_the_complete_connect_time_destination_until_a_new_syn() {
+    let mut table = FlowTable::default();
+    let original = ("127.0.0.1:7891".to_string(), "1.1.1.1:53".to_string());
+    table.publish(key(), 1, 100, Some(original.clone()), None);
+    assert_eq!(
+        table.on_syn(&key(), 10, 101, 20),
+        Some(Some(original.clone()))
+    );
+    let changed = ("127.0.0.1:7892".to_string(), "8.8.8.8:53".to_string());
+    table.publish(key(), 2, 200, Some(changed.clone()), None);
+    assert_eq!(table.on_syn(&key(), 10, 201, 20), Some(Some(original)));
+    table.close(&key(), 1);
+    assert_eq!(table.on_syn(&key(), 20, 202, 20), Some(Some(changed)));
+}

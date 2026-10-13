@@ -8,28 +8,34 @@ pub struct FlowKey {
 }
 
 #[derive(Clone, Debug)]
-pub struct FlowDecision {
+pub struct FlowDecision<R = Route> {
     pub endpoint: Option<u64>,
     pub timestamp: i64,
-    pub route: Option<Route>,
+    pub route: Option<R>,
     pub identity: Option<ProcessIdentity>,
     pub sequence: Option<u32>,
     pub pinned_direct: bool,
 }
 
-#[derive(Default)]
-pub struct FlowTable {
-    decisions: HashMap<FlowKey, FlowDecision>,
-    next: HashMap<FlowKey, FlowDecision>,
+pub struct FlowTable<R = Route> {
+    decisions: HashMap<FlowKey, FlowDecision<R>>,
+    next: HashMap<FlowKey, FlowDecision<R>>,
 }
-
-impl FlowTable {
+impl<R> Default for FlowTable<R> {
+    fn default() -> Self {
+        Self {
+            decisions: HashMap::new(),
+            next: HashMap::new(),
+        }
+    }
+}
+impl<R: Clone> FlowTable<R> {
     pub fn publish(
         &mut self,
         key: FlowKey,
         endpoint: u64,
         timestamp: i64,
-        route: Option<Route>,
+        route: Option<R>,
         identity: Option<ProcessIdentity>,
     ) -> bool {
         if self
@@ -70,7 +76,7 @@ impl FlowTable {
         sequence: u32,
         timestamp: i64,
         ttl: i64,
-    ) -> Option<Option<Route>> {
+    ) -> Option<Option<R>> {
         if let Some(old) = self.decisions.get(key) {
             if old.sequence == Some(sequence) {
                 return Some(old.route.clone());
@@ -108,7 +114,7 @@ impl FlowTable {
         );
     }
 
-    pub fn get(&self, key: &FlowKey) -> Option<&FlowDecision> {
+    pub fn get(&self, key: &FlowKey) -> Option<&FlowDecision<R>> {
         self.decisions.get(key)
     }
 

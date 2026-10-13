@@ -129,6 +129,7 @@ pub struct Config {
     pub proxy_groups: Vec<ProxyGroup>,
     pub auto_rules: Vec<AutoRule>,
     pub default_exclude_cidrs: Vec<String>,
+    pub proxy_process_dns: bool,
     pub dns: DnsConfig,
     pub ui: UiConfig,
     pub tcp_syn_parking: SynParkingConfig,
@@ -152,6 +153,7 @@ impl Default for Config {
             .map(String::from)
             .to_vec(),
             dns: DnsConfig::default(),
+            proxy_process_dns: true,
             ui: UiConfig::default(),
             tcp_syn_parking: SynParkingConfig::default(),
             log_level: "info".into(),

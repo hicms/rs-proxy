@@ -1,5 +1,9 @@
-use crate::socks;
+use crate::{
+    socks,
+    traffic::{Direction, TrafficMeter},
+};
 use anyhow::{Context, Result, bail};
+use hickory_proto::op::{Message, MessageType, OpCode};
 use proxy_core::config::ProxyGroup;
 use std::{
     io::ErrorKind,
@@ -34,24 +38,54 @@ async fn bind_listeners(listen: SocketAddrV4) -> Result<(TcpListener, UdpSocket)
     unreachable!("the last bind attempt returns its error")
 }
 
-async fn exchange(group: &ProxyGroup, upstream: SocketAddrV4, query: &[u8]) -> Result<Vec<u8>> {
-    if query.len() < 12 || query.len() > u16::MAX as usize || query[2] & 0x80 != 0 {
+pub(crate) async fn exchange(
+    group: &ProxyGroup,
+    upstream: SocketAddrV4,
+    query: &[u8],
+    meter: Option<&TrafficMeter>,
+) -> Result<Vec<u8>> {
+    let request = Message::from_vec(query).context("DNS 查询格式无效")?;
+    if query.len() > u16::MAX as usize
+        || request.message_type() != MessageType::Query
+        || request.op_code() != OpCode::Query
+        || request.queries().len() != 1
+    {
         bail!("DNS 查询格式无效");
     }
     timeout(Duration::from_secs(8), async {
         let mut stream = socks::connect(group, SocketAddr::V4(upstream)).await?;
         stream.write_u16(query.len() as u16).await?;
-        stream.write_all(query).await?;
+        if let Some(meter) = meter {
+            meter
+                .write_all(&mut stream, query, Direction::Upload)
+                .await?;
+        } else {
+            stream.write_all(query).await?;
+        }
         let length = stream.read_u16().await?;
         let mut response = vec![0; length as usize];
         stream.read_exact(&mut response).await?;
-        if response.len() < 12 || response[..2] != query[..2] || response[2] & 0x80 == 0 {
+        let answer = Message::from_vec(&response).context("DNS 上游响应格式无效")?;
+        if answer.id() != request.id()
+            || answer.message_type() != MessageType::Response
+            || answer.op_code() != request.op_code()
+            || answer.queries() != request.queries()
+        {
             bail!("DNS 上游返回了不匹配的响应");
         }
         Ok(response)
     })
     .await
     .context("DNS 转发超时")?
+}
+pub(crate) fn udp_response(response: Vec<u8>) -> Result<Vec<u8>> {
+    // A small TC reply also works for clients without EDNS; they retry over TCP.
+    if response.len() <= 512 {
+        return Ok(response);
+    }
+    let mut truncated = Message::from_vec(&response)?.truncate();
+    *truncated.extensions_mut() = None;
+    Ok(truncated.to_vec()?)
 }
 async fn tcp_client(
     mut stream: TcpStream,
@@ -66,7 +100,7 @@ async fn tcp_client(
         };
         let mut query = vec![0; length as usize];
         stream.read_exact(&mut query).await?;
-        let response = exchange(&group, upstream, &query).await?;
+        let response = exchange(&group, upstream, &query, None).await?;
         stream.write_u16(response.len() as u16).await?;
         stream.write_all(&response).await?;
     }
@@ -115,7 +149,7 @@ impl DnsForwarder {
                         let (length,peer) = match datagram { Ok(value) => value, Err(error) => { tracing::error!(%error,"DNS 接收失败"); break; } };
                         let query = bytes[..length].to_vec(); let group = group.clone(); let udp = udp.clone();
                         tasks.spawn(async move {
-                            let response = exchange(&group,upstream,&query).await?;
+                            let response = udp_response(exchange(&group,upstream,&query,None).await?)?;
                             udp.send_to(&response,peer).await?; Ok::<(),anyhow::Error>(())
                         });
                     }

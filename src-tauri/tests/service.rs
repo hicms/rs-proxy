@@ -41,6 +41,32 @@ async fn a_disk_failure_does_not_change_the_active_configuration() {
     assert_eq!(service.config(), &old);
 }
 
+#[tokio::test]
+async fn saving_process_dns_does_not_enter_system_dns_recovery() {
+    let data = tempfile::tempdir().unwrap();
+    let mut service = Service::open(data.path(), data.path().into()).unwrap();
+    let journal = data.path().join("dns-recovery.json");
+    // Any recovery attempt would fail to parse this owned fixture before OS writes.
+    std::fs::write(&journal, "invalid test journal").unwrap();
+    let mut config = service.config().clone();
+    assert!(!config.dns.enabled);
+    config.proxy_process_dns = false;
+    let saved = service.save(config).await.unwrap();
+    assert!(!saved.proxy_process_dns);
+    assert!(!saved.dns.enabled);
+    assert_eq!(
+        std::fs::read_to_string(&journal).unwrap(),
+        "invalid test journal"
+    );
+    std::fs::remove_file(journal).unwrap();
+    assert!(
+        !Service::open(data.path(), data.path().into())
+            .unwrap()
+            .config()
+            .proxy_process_dns
+    );
+}
+
 #[cfg(feature = "platform-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn group_replacement_commits_manual_routes_only_after_the_file_is_saved() {

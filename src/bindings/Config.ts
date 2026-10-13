@@ -5,4 +5,4 @@ import type { ProxyGroup } from "./ProxyGroup";
 import type { SynParkingConfig } from "./SynParkingConfig";
 import type { UiConfig } from "./UiConfig";
 
-export type Config = { version: number, revision: number, proxy_groups: Array<ProxyGroup>, auto_rules: Array<AutoRule>, default_exclude_cidrs: Array<string>, dns: DnsConfig, ui: UiConfig, tcp_syn_parking: SynParkingConfig, log_level: string, };
+export type Config = { version: number, revision: number, proxy_groups: Array<ProxyGroup>, auto_rules: Array<AutoRule>, default_exclude_cidrs: Array<string>, proxy_process_dns: boolean, dns: DnsConfig, ui: UiConfig, tcp_syn_parking: SynParkingConfig, log_level: string, };

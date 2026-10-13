@@ -86,14 +86,17 @@ export default function Settings({ config }: { config: Config }) {
         </Section>
       </>}
       {page === 'network' && <>
-        <Section icon={<Icon icon={Network} color="secondary" />} title="DNS 转发" description="通过代理查询域名。启用后更改系统 DNS，停止代理或正常退出时恢复。">
-          <CheckboxInput isDisabled={busy} label="启用 DNS 转发" value={draft.dns.enabled} onChange={enabled => setDns({ enabled })} />
-          <GroupSelector groups={draft.proxy_groups} value={draft.dns.proxy_group_id} isDisabled={busy} onChange={proxy_group_id => setDns({ proxy_group_id })} />
+        <Section icon={<Icon icon={Network} color="secondary" />} title="进程 DNS" description="已选进程的普通 DNS 查询跟随其代理组，不修改系统 DNS。">
+          <CheckboxInput isDisabled={busy} label="代理进程的 DNS" description="DNS 查询不受全局直连网段限制，仍遵守路由规则。需要内网域名时可关闭。" value={draft.proxy_process_dns} onChange={proxy_process_dns => setDraft(previous => ({ ...previous, proxy_process_dns }))} />
           <TextInput isDisabled={busy} label="上游 DNS IPv4 地址" value={draft.dns.upstream_host} onChange={upstream_host => setDns({ upstream_host })} />
           <NumberInput isDisabled={busy} label="上游 DNS 端口" value={draft.dns.upstream_port} onChange={upstream_port => setDns({ upstream_port })} min={1} max={65535} isIntegerOnly isWheelEnabled={false} />
+        </Section><Divider />
+        <Section icon={<Icon icon={Network} color="secondary" />} title="系统 DNS 转发" description="使用同一上游 DNS。启用后更改系统 DNS，停止代理或正常退出时恢复。">
+          <CheckboxInput isDisabled={busy} label="启用 DNS 转发" value={draft.dns.enabled} onChange={enabled => setDns({ enabled })} />
+          <GroupSelector groups={draft.proxy_groups} value={draft.dns.proxy_group_id} isDisabled={busy} onChange={proxy_group_id => setDns({ proxy_group_id })} />
           <TextInput isDisabled={busy} label="本地 DNS 地址" value={draft.dns.listen_host} onChange={listen_host => setDns({ listen_host })} description="回环 IPv4 地址，监听端口为 53。" />
         </Section><Divider />
-        <Section icon={<Icon icon={Route} color="secondary" />} title="直连网段" description="这些地址始终直连，每行一个 IPv4 地址或 CIDR。">
+        <Section icon={<Icon icon={Route} color="secondary" />} title="直连网段" description="这些地址默认直连，已启用的进程 DNS 转发除外。每行一个 IPv4 地址或 CIDR。">
           <TextArea isDisabled={busy} label="全局排除网段" value={excluded} onChange={setExcluded} rows={5} />
         </Section>
       </>}

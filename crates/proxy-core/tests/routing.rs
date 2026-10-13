@@ -149,3 +149,66 @@ fn manual_tree_routing_is_identity_scoped_and_precedes_rules() {
         "rule"
     );
 }
+
+#[test]
+fn process_dns_overrides_only_global_direct_ranges_and_uses_original_rule_filters() {
+    use proxy_core::{config::TrafficFilter, model::Route};
+    let mut config = Config::default();
+    config.dns.upstream_host = "1.1.1.1".into();
+    config.dns.upstream_port = 5353;
+    let manual = Route {
+        group_id: 0,
+        rule_id: None,
+        source: "manual".into(),
+    };
+    let lan = "192.168.1.1".parse().unwrap();
+    let public = "198.19.99.53".parse().unwrap();
+    let policy = RoutingPolicy::new(&config).unwrap();
+    assert_eq!(
+        policy
+            .destination(&manual, lan, 53)
+            .unwrap()
+            .address
+            .to_string(),
+        "1.1.1.1:5353"
+    );
+    assert!(policy.destination(&manual, lan, 443).is_none());
+    assert!(
+        policy
+            .destination(&manual, "127.0.0.1".parse().unwrap(), 53)
+            .is_none()
+    );
+    assert!(!policy.destination(&manual, public, 443).unwrap().dns);
+    config.auto_rules.push(AutoRule {
+        id: "dns".into(),
+        name: "DNS".into(),
+        enabled: true,
+        process_name: "browser.exe".into(),
+        protocol: Protocol::Udp,
+        dst_filter: TrafficFilter {
+            include_cidrs: vec!["192.168.0.0/16".into()],
+            exclude_cidrs: vec!["192.168.1.2".into()],
+            include_ports: vec!["53".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let policy = RoutingPolicy::new(&config).unwrap();
+    let browser = process(42, 1, "browser.exe", None);
+    assert!(policy.classify(&[&browser], Protocol::Tcp).is_none());
+    let rule = policy.classify(&[&browser], Protocol::Udp).unwrap();
+    assert!(policy.destination(&rule, lan, 53).is_some());
+    assert!(policy.destination(&rule, public, 53).is_none());
+    assert!(
+        policy
+            .destination(&rule, "192.168.1.2".parse().unwrap(), 53)
+            .is_none()
+    );
+    assert!(policy.destination(&rule, lan, 443).is_none());
+    config.proxy_process_dns = false;
+    let policy = RoutingPolicy::new(&config).unwrap();
+    assert!(policy.destination(&manual, lan, 53).is_none());
+    let direct_target = policy.destination(&manual, public, 53).unwrap();
+    assert!(!direct_target.dns);
+    assert_eq!(direct_target.address.to_string(), "198.19.99.53:53");
+}

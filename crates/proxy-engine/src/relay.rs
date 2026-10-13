@@ -1,5 +1,5 @@
 use crate::{
-    packet,
+    packet, process_dns,
     socks::{self, Association, SocksAddress},
     state::{Shared, UdpRoute},
     traffic::Direction,
@@ -49,8 +49,8 @@ pub(crate) async fn tcp_loop(
                     let result: Result<()> = tokio::select! {
                         _ = cancel.cancelled() => Ok(()),
                         result = async {
-                            let mut upstream = socks::connect(&entry.group,SocketAddr::V4(entry.key.remote)).await
-                                .with_context(|| format!("建立 SOCKS5 连接（代理组 {}，目标 {}）", entry.group.name, entry.key.remote))?;
+                            let mut upstream = socks::connect(&entry.group,SocketAddr::V4(entry.destination.address)).await
+                                .with_context(|| format!("建立 SOCKS5 连接（代理组 {}，目标 {}，上游 {}）", entry.group.name, entry.key.remote, entry.destination.address))?;
                             let (client_read, client_write) = client.split(); let (proxy_read, proxy_write) = upstream.split();
                             match tokio::try_join!(meter.transfer(client_read,proxy_write,Direction::Upload),meter.transfer(proxy_read,client_write,Direction::Download)) {
                                 Ok(_) => {},
@@ -82,7 +82,7 @@ pub(crate) struct UdpPacket {
     pub payload: Vec<u8>,
     pub address: Address,
 }
-type SessionKey = (u64, SocketAddrV4, u64);
+type SessionKey = (u64, i64, SocketAddrV4, u64);
 
 async fn udp_session(
     first: UdpPacket,
@@ -113,7 +113,7 @@ async fn udp_session(
             _ = cancel.cancelled() => return Ok(()),
             _ = control.read(&mut control_byte) => return Ok(()),
             _ = expiry.tick() => {
-                if last_activity.elapsed() > Duration::from_secs(120) || !shared.state.lock().unwrap().udp_active(owner.endpoint,&owner.identity) { return Ok(()); }
+                if last_activity.elapsed() > Duration::from_secs(120) || !shared.state.lock().unwrap().udp_active(&owner) { return Ok(()); }
             }
             packet = receiver.recv() => {
                 let Some(packet) = packet else { return Ok(()); }; address = packet.address;
@@ -123,7 +123,7 @@ async fn udp_session(
             received = socket.recv(&mut buffer) => {
                 let count = received?; let (remote,payload) = socks::decode_datagram(&buffer[..count])?;
                 let SocksAddress::Ip(SocketAddr::V4(remote)) = remote else { continue; };
-                if !shared.state.lock().unwrap().udp_active(owner.endpoint,&owner.identity) { return Ok(()); }
+                if !shared.state.lock().unwrap().udp_active(&owner) { return Ok(()); }
                 let mut packet = packet::udp_reply(remote,local,payload).context("UDP 回复超过 IPv4 长度限制")?;
                 let mut reply_address = address; reply_address.set_inbound();
                 network.recalculate(&mut packet,&mut reply_address)?; network.send(&packet,&reply_address)?;
@@ -141,14 +141,30 @@ pub(crate) async fn udp_loop(
 ) {
     let mut sessions: HashMap<SessionKey, mpsc::Sender<UdpPacket>> = HashMap::new();
     let mut tasks = JoinSet::new();
+    let mut queries = JoinSet::new();
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
+            Some(result) = queries.join_next(), if !queries.is_empty() => {
+                if let Ok(Err(error)) = result { shared.error(format!("DNS 转发失败：{error:#}")); }
+            }
             Some(result) = tasks.join_next(), if !tasks.is_empty() => {
                 if let Ok((key,result)) = result { sessions.remove(&key); if let Err(error) = result { shared.error(format!("UDP 转发失败：{error:#}")); } }
             }
             packet = receiver.recv() => {
-                let Some(packet) = packet else { break; }; let key = (packet.route.owner.endpoint,packet.local,packet.route.traffic_group.generation());
+                let Some(packet) = packet else { break; };
+                if packet.route.destination.dns {
+                    if queries.len() >= 256 { shared.error("DNS 查询达到容量限制，查询已丢弃"); continue; }
+                    let shared = shared.clone(); let network = network.clone(); let cancel = cancel.clone();
+                    queries.spawn(async move {
+                        shared.counters.udp.fetch_add(1,Ordering::Relaxed);
+                        let result = tokio::select! { _ = cancel.cancelled() => Ok(()), result = process_dns::relay(packet,&shared,&network) => result };
+                        shared.counters.udp.fetch_sub(1,Ordering::Relaxed);
+                        result
+                    });
+                    continue;
+                }
+                let key = (packet.route.owner.endpoint,packet.route.owner.timestamp,packet.local,packet.route.traffic_group.generation());
                 if let Some(sender) = sessions.get(&key) {
                     if sender.try_send(packet).is_err() { shared.error("UDP 会话队列不可用，数据报已丢弃"); } continue;
                 }
@@ -165,4 +181,5 @@ pub(crate) async fn udp_loop(
     }
     cancel.cancel();
     while tasks.join_next().await.is_some() {}
+    while queries.join_next().await.is_some() {}
 }

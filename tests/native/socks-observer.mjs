@@ -40,7 +40,7 @@ export async function observeSocks(host = '127.0.0.1', port = 7891) {
         relay.on('error', error => errors.push(error.message)); udp.on('error', error => errors.push(error.message));
         relay.bind(0, '127.0.0.1'); udp.bind(0, '127.0.0.1'); await Promise.all([once(relay, 'listening'), once(udp, 'listening')]);
         client.once('close', () => { relay.close(); udp.close(); });
-        const source = Buffer.from([127, 0, 0, 1, 0, 0]); source.writeUInt16BE(udp.address().port, 4);
+        const source = Buffer.from([0, 0, 0, 0, 0, 0]); source.writeUInt16BE(udp.address().port, 4);
         upstream.write(Buffer.concat([Buffer.from([5, 3, 0, 1]), source]));
       } else upstream.write(Buffer.concat([header, destination]));
       const response = await read(upstream, 4); const bound = await address(upstream, response[3]);

@@ -63,6 +63,7 @@ impl TrafficGroup {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Direction {
     Upload,
     Download,
@@ -85,19 +86,29 @@ impl TrafficMeter {
             if count == 0 {
                 return writer.shutdown().await;
             }
-            let mut offset = 0;
-            while offset < count {
-                let written = writer.write(&bytes[offset..count]).await?;
-                if written == 0 {
-                    return Err(std::io::ErrorKind::WriteZero.into());
-                }
-                match direction {
-                    Direction::Upload => self.record(written, 0),
-                    Direction::Download => self.record(0, written),
-                }
-                offset += written;
-            }
+            self.write_all(&mut writer, &bytes[..count], direction)
+                .await?;
         }
+    }
+    pub async fn write_all<W: AsyncWrite + Unpin>(
+        &self,
+        writer: &mut W,
+        bytes: &[u8],
+        direction: Direction,
+    ) -> std::io::Result<()> {
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let written = writer.write(&bytes[offset..]).await?;
+            if written == 0 {
+                return Err(std::io::ErrorKind::WriteZero.into());
+            }
+            match direction {
+                Direction::Upload => self.record(written, 0),
+                Direction::Download => self.record(0, written),
+            }
+            offset += written;
+        }
+        Ok(())
     }
     pub fn record(&self, uploaded: usize, downloaded: usize) {
         for counter in &self.counters {

@@ -4,7 +4,13 @@ use crate::{
     model::{ProcessInfo, Route},
 };
 use ipnet::Ipv4Net;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Destination {
+    pub address: SocketAddrV4,
+    pub dns: bool,
+}
 
 pub fn wildcard_match(pattern: &str, input: &str) -> bool {
     let pattern: Vec<_> = pattern.to_lowercase().chars().collect();
@@ -56,6 +62,7 @@ fn matches_process(rule: &AutoRule, process: &ProcessInfo) -> bool {
 pub struct RoutingPolicy {
     rules: Vec<(AutoRule, CompiledFilter)>,
     excludes: Vec<Ipv4Net>,
+    dns: Option<SocketAddrV4>,
 }
 
 impl RoutingPolicy {
@@ -68,6 +75,12 @@ impl RoutingPolicy {
                 .map(|rule| Ok((rule.clone(), CompiledFilter::new(&rule.dst_filter)?)))
                 .collect::<Result<_, ConfigError>>()?,
             excludes: parse_networks(&config.default_exclude_cidrs)?,
+            dns: config.proxy_process_dns.then(|| {
+                SocketAddrV4::new(
+                    config.dns.upstream_host.parse().unwrap(),
+                    config.dns.upstream_port,
+                )
+            }),
         })
     }
 
@@ -87,16 +100,30 @@ impl RoutingPolicy {
     }
 
     pub fn allows_destination(&self, route: &Route, ip: Ipv4Addr, port: u16) -> bool {
-        if self.excludes.iter().any(|net| net.contains(&ip)) {
-            return false;
-        }
-        match &route.rule_id {
+        self.destination(route, ip, port).is_some()
+    }
+
+    pub fn destination(&self, route: &Route, ip: Ipv4Addr, port: u16) -> Option<Destination> {
+        let allowed = match &route.rule_id {
             None => true,
             Some(id) => self
                 .rules
                 .iter()
                 .find(|(rule, _)| &rule.id == id)
                 .is_some_and(|(_, filter)| filter.allows(ip, port)),
+        };
+        if !allowed || ip.is_loopback() {
+            return None;
         }
+        // Selected processes may use a LAN resolver; only DNS bypasses global direct CIDRs.
+        if port == 53
+            && let Some(address) = self.dns
+        {
+            return Some(Destination { address, dns: true });
+        }
+        (!self.excludes.iter().any(|net| net.contains(&ip))).then_some(Destination {
+            address: SocketAddrV4::new(ip, port),
+            dns: false,
+        })
     }
 }

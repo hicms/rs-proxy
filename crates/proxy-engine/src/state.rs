@@ -4,7 +4,7 @@ use proxy_core::{
     config::{Config, Protocol, ProxyGroup},
     flow::{FlowKey, FlowTable},
     model::{EngineStats, ProcessIdentity, Route},
-    rules::RoutingPolicy,
+    rules::{Destination, RoutingPolicy},
     tree::ProcessTree,
     udp::{UdpLookup, UdpOwner, UdpTable},
 };
@@ -72,13 +72,21 @@ pub(crate) struct Reflection {
     pub group: ProxyGroup,
     pub identity: ProcessIdentity,
     pub traffic_group: TrafficGroup,
+    pub destination: Destination,
 }
 pub(crate) type ReverseKey = (Ipv4Addr, Ipv4Addr, u16);
+#[derive(Clone, Debug)]
+pub(crate) struct ProxyRoute {
+    pub group: ProxyGroup,
+    pub destination: Destination,
+    pub traffic_group: TrafficGroup,
+}
 #[derive(Clone)]
 pub(crate) struct UdpRoute {
     pub owner: UdpOwner,
     pub group: ProxyGroup,
     pub traffic_group: TrafficGroup,
+    pub destination: Destination,
 }
 
 pub(crate) struct State {
@@ -87,7 +95,7 @@ pub(crate) struct State {
     pub config: Config,
     pub policy: RoutingPolicy,
     pub tree: ProcessTree,
-    pub flows: FlowTable,
+    pub flows: FlowTable<ProxyRoute>,
     pub reflections: HashMap<FlowKey, Reflection>,
     pub reverse: HashMap<ReverseKey, Reflection>,
     expirations: HashMap<u16, std::time::Instant>,
@@ -173,6 +181,28 @@ impl State {
         }
         self.tree.route(identity, protocol, &self.policy)
     }
+    fn proxy_route(
+        &self,
+        identity: &ProcessIdentity,
+        protocol: Protocol,
+        remote: SocketAddrV4,
+    ) -> Option<ProxyRoute> {
+        let route = self.route(identity, protocol)?;
+        let destination = self
+            .policy
+            .destination(&route, *remote.ip(), remote.port())?;
+        let group = self
+            .config
+            .proxy_groups
+            .iter()
+            .find(|group| group.id == route.group_id)?
+            .clone();
+        Some(ProxyRoute {
+            traffic_group: self.traffic_groups.get(&group.id)?.clone(),
+            group,
+            destination,
+        })
+    }
     pub fn socket_event(
         &mut self,
         event: SocketEvent,
@@ -190,11 +220,7 @@ impl State {
             if event.kind == 4 {
                 let route = identity
                     .as_ref()
-                    .and_then(|id| self.route(id, Protocol::Tcp))
-                    .filter(|r| {
-                        self.policy
-                            .allows_destination(r, *key.remote.ip(), key.remote.port())
-                    });
+                    .and_then(|id| self.proxy_route(id, Protocol::Tcp, key.remote));
                 self.flows
                     .publish(key, event.endpoint, event.timestamp, route, identity);
             } else if event.kind == 7 {
@@ -250,34 +276,22 @@ impl State {
             UdpLookup::Found(owner) => owner,
         };
         Ok(Some(
-            self.route(&owner.identity, Protocol::Udp)
-                .filter(|route| {
-                    self.policy
-                        .allows_destination(route, *key.remote.ip(), key.remote.port())
-                })
-                .and_then(|route| {
-                    self.config
-                        .proxy_groups
-                        .iter()
-                        .find(|g| g.id == route.group_id)
-                        .cloned()
-                        .and_then(|group| {
-                            Some(UdpRoute {
-                                traffic_group: self.traffic_groups.get(&group.id)?.clone(),
-                                owner: owner.clone(),
-                                group,
-                            })
-                        })
+            self.proxy_route(&owner.identity, Protocol::Udp, key.remote)
+                .map(|route| UdpRoute {
+                    owner: owner.clone(),
+                    group: route.group,
+                    destination: route.destination,
+                    traffic_group: route.traffic_group,
                 }),
         ))
     }
-    pub fn udp_active(&self, endpoint: u64, identity: &ProcessIdentity) -> bool {
-        self.udp.active(endpoint, identity)
+    pub fn udp_active(&self, owner: &UdpOwner) -> bool {
+        self.udp.active(owner)
     }
     pub fn reflect(
         &mut self,
         key: &FlowKey,
-        route: &Route,
+        route: &ProxyRoute,
         address: proxy_platform::windivert::Address,
     ) -> Option<Reflection> {
         let decision = self.flows.get(key)?;
@@ -289,13 +303,8 @@ impl State {
             return Some(existing.clone());
         }
         self.detach(key);
-        let group = self
-            .config
-            .proxy_groups
-            .iter()
-            .find(|g| g.id == route.group_id)?
-            .clone();
-        let traffic_group = self.traffic_groups.get(&group.id)?.clone();
+        let group = route.group.clone();
+        let traffic_group = route.traffic_group.clone();
         for _ in 1024..=u16::MAX {
             let alias = self.next_alias;
             self.next_alias = if alias == u16::MAX { 1024 } else { alias + 1 };
@@ -311,6 +320,7 @@ impl State {
                 group,
                 identity,
                 traffic_group,
+                destination: route.destination,
             };
             self.reverse.insert(reverse, reflection.clone());
             self.expirations.insert(

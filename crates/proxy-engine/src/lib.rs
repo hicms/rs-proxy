@@ -1,6 +1,7 @@
 mod capture;
 pub mod dns;
 pub mod packet;
+mod process_dns;
 mod reconnect;
 mod relay;
 mod runtime;

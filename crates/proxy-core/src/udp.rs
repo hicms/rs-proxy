@@ -123,10 +123,12 @@ impl UdpTable {
             UdpLookup::Found(&binding.owner)
         }
     }
-    pub fn active(&self, endpoint: u64, identity: &ProcessIdentity) -> bool {
-        self.bindings
-            .get(&endpoint)
-            .is_some_and(|b| b.closed.is_none() && &b.owner.identity == identity)
+    pub fn active(&self, owner: &UdpOwner) -> bool {
+        self.bindings.get(&owner.endpoint).is_some_and(|b| {
+            b.closed.is_none()
+                && b.owner.identity == owner.identity
+                && b.owner.timestamp == owner.timestamp
+        })
     }
     pub fn collect(&mut self, before: i64) {
         self.bindings

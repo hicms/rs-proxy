@@ -63,15 +63,15 @@ async function httpsThrough(observer, kind = 'https') {
   await expect.poll(() => observer.records.slice(start).some(record => record.command === 1 && record.target === '1.1.1.1:443' && record.reply === 0 && record.uploaded > 0 && record.downloaded > 0)).toBeTruthy();
   await trafficDelta(before, observer, start, kind !== 'child');
 }
-async function trafficDelta(before, observer, start, checkProcess = true) {
+async function trafficDelta(before, observer, start, checkProcess = true, dnsOverTcp = false) {
   const groupId = before.config.proxy_groups.find(group => group.port === observer.port).id;
   const counts = stats => [stats?.uploaded_bytes ?? 0, stats?.downloaded_bytes ?? 0];
   const delta = (next, previous) => counts(next).map((value, index) => value - counts(previous)[index]);
   await expect.poll(async () => {
     const after = await snapshot();
     const expected = observer.records.slice(start).reduce((sum, record) => [
-      sum[0] + record.uploaded + record.datagrams.filter(packet => packet.direction === 'request').reduce((bytes, packet) => bytes + packet.bytes, 0),
-      sum[1] + record.downloaded + record.datagrams.filter(packet => packet.direction === 'response').reduce((bytes, packet) => bytes + packet.bytes, 0),
+      sum[0] + record.uploaded - (dnsOverTcp ? 2 : 0) + record.datagrams.filter(packet => packet.direction === 'request').reduce((bytes, packet) => bytes + packet.bytes, 0),
+      sum[1] + record.downloaded - (dnsOverTcp ? 2 : 0) + record.datagrams.filter(packet => packet.direction === 'response').reduce((bytes, packet) => bytes + packet.bytes, 0),
     ], [0, 0]);
     const checks = [delta(after.traffic.total, before.traffic.total), delta(after.traffic.groups.find(group => group.group_id === groupId)?.stats, before.traffic.groups.find(group => group.group_id === groupId)?.stats)];
     if (checkProcess) {
@@ -215,6 +215,9 @@ try {
     await request({ kind: 'release' }); await button('进程').click(); await page.getByRole('radio', { name: '全部', exact: true }).check();
   });
   await check('UDP ASSOCIATE with valid DNS replies from two targets', async () => {
+    const config = (await snapshot()).config;
+    await rpc('save_config', { config: { ...config, proxy_process_dns: false } });
+    try {
     const before = await snapshot();
     const start = observerA.records.length;
     const replies = await request({ kind: 'udp', id: 5100, hosts: ['1.1.1.1', '1.0.0.1'] }); assert.equal(replies.length, 2);
@@ -222,7 +225,23 @@ try {
     const datagrams = observerA.records.slice(start).flatMap(record => record.datagrams);
     for (const [index, target] of ['1.1.1.1:53', '1.0.0.1:53'].entries()) for (const direction of ['request', 'response']) assert.ok(datagrams.some(packet => packet.direction === direction && packet.target === target && packet.id === 5100 + index), `Missing real UDP ${direction}: ${target}`);
     await trafficDelta(before, observerA, start);
+    } finally {
+      await rpc('save_config', { config: { ...(await snapshot()).config, proxy_process_dns: true } });
+    }
   }, true);
+  await check('process DNS reaches configured resolver through upstream 7891 without system DNS', async () => {
+    const config = (await snapshot()).config;
+    assert.equal(config.dns.enabled, false);
+    await rpc('save_config', { config: { ...config, dns: { ...config.dns, upstream_host: '1.1.1.1' } } });
+    const before = await snapshot(); const start = observerA.records.length;
+    const replies = await request({ kind: 'udp', id: 5150, hosts: ['192.168.250.53', '198.19.99.53'] });
+    assert.equal(replies.length, 2);
+    const requests = observerA.records.slice(start);
+    assert.equal(requests.length, 2);
+    assert.ok(requests.every(record => record.command === 1 && record.target === '1.1.1.1:53' && record.reply === 0));
+    await trafficDelta(before, observerA, start, true, true);
+    assert.equal((await snapshot()).stats.dns_active, false);
+  });
   await check('manual removal restores direct connection', async () => {
     await processDialog(ready.pid); await button('移除手动选择，使用自动规则').click(); await expect(dialog()).toHaveCount(0); await direct();
   });
@@ -277,6 +296,15 @@ try {
     await page.getByRole('button', { name: '高级', exact: true }).click(); await page.getByRole('spinbutton', { name: '首包等待时间', exact: true }).fill('25'); await page.getByRole('spinbutton', { name: '首包等待时间', exact: true }).press('Tab'); await button('保存设置').click();
     await expect(page.getByRole('spinbutton', { name: '首包等待时间', exact: true })).toHaveValue('25');
     await page.getByRole('button', { name: '网络', exact: true }).click(); await expect(page.getByRole('checkbox', { name: '启用 DNS 转发' })).not.toBeChecked();
+    const processDns = page.getByRole('checkbox', { name: '代理进程的 DNS' });
+    await expect(processDns).toBeChecked();
+    for (const enabled of [false, true]) {
+      await processDns.setChecked(enabled); await button('保存设置').click();
+      await expect.poll(async () => (await snapshot()).config.proxy_process_dns).toBe(enabled);
+      await expect(processDns).toBeEnabled();
+      assert.equal((await snapshot()).config.dns.enabled, false);
+      assert.equal((await snapshot()).stats.dns_active, false);
+    }
     await page.screenshot({ path: join(evidence, 'network.png') });
     await page.getByRole('button', { name: '常规', exact: true }).click(); await page.screenshot({ path: join(evidence, 'settings.png') });
   });

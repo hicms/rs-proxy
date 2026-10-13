@@ -10,6 +10,14 @@ fn defaults_leave_traffic_untouched_and_roundtrip() {
     let config = Config::default();
     config.validate().unwrap();
     assert!(!config.dns.enabled);
+    assert!(config.proxy_process_dns);
+    let mut saved = serde_json::to_value(&config).unwrap();
+    saved.as_object_mut().unwrap().remove("proxy_process_dns");
+    assert!(
+        serde_json::from_value::<Config>(saved)
+            .unwrap()
+            .proxy_process_dns
+    );
     assert!(config.auto_rules.is_empty());
     assert!(!AutoRule::default().enabled);
     assert_eq!(

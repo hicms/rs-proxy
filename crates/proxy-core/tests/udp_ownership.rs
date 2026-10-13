@@ -28,8 +28,8 @@ fn closing_one_endpoint_preserves_another_socket_on_the_same_port() {
     table.bind(first.clone(), false, None);
     table.bind(second.clone(), false, None);
     table.close(1, 10, first.local, 120);
-    assert!(!table.active(1, &first.identity));
-    assert!(table.active(2, &second.identity));
+    assert!(!table.active(&first));
+    assert!(table.active(&second));
     assert!(matches!(table.lookup(&key("10.0.0.2"), 130), UdpLookup::Found(o) if o.endpoint == 2));
 }
 #[test]
@@ -62,8 +62,27 @@ fn a_seeded_wildcard_is_replaced_by_its_concrete_endpoint_and_does_not_poison_re
     table.bind(owner(100, "0.0.0.0", 0), true, None);
     let actual = owner(1, "10.0.0.1", 100);
     table.bind(actual.clone(), false, Some(key("10.0.0.1").remote));
-    assert!(!table.active(100, &actual.identity));
+    assert!(!table.active(&owner(100, "0.0.0.0", 0)));
     table.close(1, 10, actual.local, 120);
     table.bind(owner(2, "0.0.0.0", 130), false, None);
     assert!(matches!(table.lookup(&key("10.0.0.1"), 140), UdpLookup::Found(o) if o.endpoint == 2));
+}
+
+#[test]
+fn delayed_reply_cannot_reach_a_rebound_endpoint_in_the_same_process() {
+    let mut table = UdpTable::default();
+    let first = owner(1, "0.0.0.0", 100);
+    table.bind(first.clone(), false, None);
+    // CONNECT after BIND belongs to the same socket lifetime.
+    table.bind(
+        owner(1, "10.0.0.1", 110),
+        false,
+        Some(key("10.0.0.1").remote),
+    );
+    assert!(table.active(&first));
+    table.close(1, 10, first.local, 120);
+    let second = owner(1, "0.0.0.0", 130);
+    table.bind(second.clone(), false, None);
+    assert!(!table.active(&first));
+    assert!(table.active(&second));
 }

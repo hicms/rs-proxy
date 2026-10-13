@@ -56,8 +56,10 @@ async fn udp_and_tcp_dns_queries_use_the_configured_socks_server() {
         .is_err(),
         "a fixed occupied port must not fall back to another port"
     );
-    let mut query = [0u8; 12];
-    query[0..3].copy_from_slice(&[0x12, 0x34, 1]);
+    let query = [
+        0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 3, b'o', b'n', b'e', 4, b't', b'e', b's', b't',
+        0, 0, 1, 0, 1,
+    ];
     let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     udp.send_to(&query, forwarder.address()).await.unwrap();
     let mut response = [0; 512];
@@ -65,20 +67,20 @@ async fn udp_and_tcp_dns_queries_use_the_configured_socks_server() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(count, 12);
+    assert_eq!(count, query.len());
     assert_eq!(from, forwarder.address().into());
     assert_eq!(&response[..3], &[0x12, 0x34, 0x81]);
     let mut tcp = TcpStream::connect(forwarder.address()).await.unwrap();
-    tcp.write_u16(12).await.unwrap();
+    tcp.write_u16(query.len() as u16).await.unwrap();
     tcp.write_all(&query).await.unwrap();
     assert_eq!(
         timeout(Duration::from_secs(3), tcp.read_u16())
             .await
             .unwrap()
             .unwrap(),
-        12
+        query.len() as u16
     );
-    tcp.read_exact(&mut response[..12]).await.unwrap();
+    tcp.read_exact(&mut response[..query.len()]).await.unwrap();
     assert_eq!(&response[..3], &[0x12, 0x34, 0x81]);
     task.await.unwrap();
     forwarder.shutdown().await;

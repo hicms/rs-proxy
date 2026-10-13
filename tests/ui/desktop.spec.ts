@@ -9,6 +9,33 @@ test('browser mode explains that a desktop service is required', async ({ page }
   await expect(page.getByRole('button', { name: '启动代理', exact: true })).toBeDisabled();
 });
 
+test('process DNS saves independently from system DNS at minimum window size', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 560 });
+  await desktop(page);
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '网络', exact: true }).click();
+  const processDns = page.getByRole('checkbox', { name: '代理进程的 DNS' });
+  const systemDns = page.getByRole('checkbox', { name: '启用 DNS 转发' });
+  await expect(processDns).toBeChecked();
+  await expect(systemDns).not.toBeChecked();
+  await processDns.uncheck();
+  await page.getByRole('button', { name: '保存设置' }).click();
+  await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled();
+  await expect(systemDns).not.toBeChecked();
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  await page.getByRole('link', { name: '进程与连接', exact: true }).click();
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '网络', exact: true }).click();
+  await expect(processDns).not.toBeChecked();
+  await processDns.check();
+  await page.getByRole('button', { name: '保存设置' }).click();
+  await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled();
+  await expect(systemDns).not.toBeChecked();
+  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-process-dns.png') });
+});
+
 test('settings stay locked until an asynchronous save settles', async ({ page }) => {
   await desktop(page);
   await page.evaluate(() => { (window as unknown as Record<string, unknown>).saveDelay = 2500; });
