@@ -15,6 +15,7 @@ test('reconnect confirms filtered identities across pages, cancels without mutat
   await expect(page.getByRole('button', { name: '重连已选代理', exact: true })).toBeDisabled();
   await page.evaluate(() => {
     const fixture = window as unknown as Fixture;
+    fixture.snapshot.config.revision += 1;
     fixture.snapshot.config.proxy_groups.push({ id: 1, name: '工作代理', host: '127.0.0.1', port: 7891 });
     fixture.snapshot.processes.forEach((item, index) => { item.route = index % 3 === 2 ? null : { group_id: index % 3, rule_id: null, source: 'manual' }; });
     fixture.reconnectDelay = 400;

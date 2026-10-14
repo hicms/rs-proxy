@@ -22,7 +22,11 @@ export function useModel() {
     if (loading.current) return;
     if (!isTauri()) { setError('请在 RS Proxy 桌面应用中连接代理引擎。'); return; }
     loading.current = true;
-    try { setSnapshot(await invoke<Snapshot>('get_snapshot')); setError(''); }
+    try {
+      const next = await invoke<Snapshot>('get_snapshot');
+      setSnapshot(previous => previous?.config.revision === next.config.revision ? { ...next, config: previous.config } : next);
+      setError('');
+    }
     catch (error) { setError(String(error)); }
     finally { loading.current = false; }
   }, []);
@@ -45,7 +49,8 @@ export function useModel() {
   return { snapshot, error, refresh, save, changeConfig, changingConfig: pendingChanges > 0, setAutostart, changingAutostart };
 }
 export type Model = ReturnType<typeof useModel>;
-export const ModelContext = createContext<Model | null>(null);
+export type ModelActions = Omit<Model, 'snapshot' | 'error'>;
+export const ModelContext = createContext<ModelActions | null>(null);
 export function useAppModel() {
   const model = useContext(ModelContext);
   if (!model) throw new Error('缺少应用状态');

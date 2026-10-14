@@ -1,7 +1,7 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 import { useState } from 'react';
-import { Layout, LayoutHeader, LayoutContent, HStack, VStack } from '@astryxdesign/core/Layout';
-import { Text, Heading } from '@astryxdesign/core/Text';
+import { Layout, LayoutContent, HStack, VStack } from '@astryxdesign/core/Layout';
+import { Text } from '@astryxdesign/core/Text';
 import { Table, proportional, type TableColumn } from '@astryxdesign/core/Table';
 import { Button } from '@astryxdesign/core/Button';
 import { TextInput } from '@astryxdesign/core/TextInput';
@@ -15,6 +15,7 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Switch } from '@astryxdesign/core/Switch';
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, Route } from 'lucide-react';
+import { Accent, PageHeading, PrimaryButton } from '../components/PageHeading';
 import { Editor, GroupSelector } from '../components/Editor';
 import { useAction, useAppModel, lines } from '../model';
 import type { Config } from '../bindings/Config';
@@ -52,11 +53,11 @@ export default function Rules({ config }: { config: Config }) {
     { key: 'match', header: '匹配条件', width: proportional(3), renderCell: rule => <Text type="code" maxLines={2}>{[rule.process_name, rule.image_path_pattern, rule.cmdline_pattern].filter(Boolean).join(' · ')}</Text> },
     { key: 'protocol', header: '协议', renderCell: rule => <Text>{rule.protocol === 'both' ? 'TCP / UDP' : rule.protocol.toUpperCase()}</Text> },
     { key: 'proxy_group_id', header: '代理组', renderCell: rule => <Text>{config.proxy_groups.find(group => group.id === rule.proxy_group_id)?.name}</Text> },
-    { key: 'enabled', header: '启用', renderCell: rule => <Switch label={`启用 ${rule.name}`} isLabelHidden size="sm" value={rule.enabled} isDisabled={action.busy} onChange={enabled => void action.run(() => model.save({ ...config, auto_rules: config.auto_rules.map(item => item.id === rule.id ? { ...item, enabled } : item) }))} /> },
+    { key: 'enabled', header: '启用', renderCell: rule => <Accent><Switch label={`启用 ${rule.name}`} isLabelHidden size="sm" value={rule.enabled} isDisabled={action.busy} onChange={enabled => void action.run(() => model.save({ ...config, auto_rules: config.auto_rules.map(item => item.id === rule.id ? { ...item, enabled } : item) }))} /></Accent> },
     { key: 'actions', header: '', width: proportional(2), renderCell: rule => <HStack gap={1} hAlign="end"><IconButton label="上移" tooltip="提高优先级" icon={<Icon icon={ArrowUp} />} size="sm" variant="ghost" isDisabled={action.busy || config.auto_rules[0].id === rule.id} onClick={() => void action.run(() => move(rule.id, -1))} /><IconButton label="下移" tooltip="降低优先级" icon={<Icon icon={ArrowDown} />} size="sm" variant="ghost" isDisabled={action.busy || config.auto_rules.at(-1)?.id === rule.id} onClick={() => void action.run(() => move(rule.id, 1))} /><IconButton label="编辑" tooltip="编辑规则" icon={<Icon icon={Pencil} />} variant="ghost" size="sm" onClick={() => setEditing({ config, rule })} /><IconButton label="删除" tooltip="删除规则" icon={<Icon icon={Trash2} />} size="sm" variant="ghost" onClick={() => setDeleting(rule)} /></HStack> },
   ];
-  return <><Layout header={<LayoutHeader hasDivider><HStack vAlign="center" hAlign="between" gap={3} wrap="wrap"><VStack gap={1}><Heading level={1}>路由规则</Heading><Text type="supporting" color="secondary">从上到下匹配，手动选择优先。</Text></VStack><Button label="新建规则" icon={<Icon icon={Plus} />} variant="primary" onClick={create} /></HStack></LayoutHeader>}
-    content={<LayoutContent><VStack gap={4}>{action.error && <Banner status="error" title="规则更新失败" description={action.error} />}{config.auto_rules.length ? <Table data={config.auto_rules} columns={columns} idKey="id" hasHover /> : <EmptyState icon={<Icon icon={Route} size="lg" />} title="让应用自动连接" description="添加一条规则，为指定应用选择代理。" actions={<Button label="添加第一条规则" icon={<Icon icon={Plus} />} onClick={create} />} />}</VStack></LayoutContent>} />
+  return <><Layout padding={6} header={<PageHeading title="路由规则" description="从上到下匹配，手动选择优先。" actions={<PrimaryButton label="新建规则" icon={<Icon icon={Plus} />} onClick={create} />} />}
+    content={<LayoutContent padding={0}><VStack gap={4} paddingInline={6}>{action.error && <Banner status="error" title="规则更新失败" description={action.error} />}{config.auto_rules.length ? <Table data={config.auto_rules} columns={columns} idKey="id" hasHover /> : <EmptyState icon={<Icon icon={Route} size="lg" />} title="让应用自动连接" description="添加一条规则，为指定应用选择代理。" actions={<Button label="添加第一条规则" icon={<Icon icon={Plus} />} onClick={create} />} />}</VStack></LayoutContent>} />
     {editing && <RuleEditor config={editing.config} initial={editing.rule} onClose={() => setEditing(undefined)} />}
     {deleting && <Editor title="删除规则" saveLabel="删除规则" destructive onClose={() => setDeleting(undefined)} onSave={() => model.save({ ...config, auto_rules: config.auto_rules.filter(item => item.id !== deleting.id) })}><Text>删除「{deleting.name}」后，新的连接将使用其余匹配规则。</Text></Editor>}
   </>;

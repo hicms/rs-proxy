@@ -14,7 +14,7 @@ export async function desktop(page: Page, options: { iconDelay?: number; process
   await page.addInitScript(({ snapshot, options, icons }) => {
     if (options.processCount) snapshot.processes = Array.from({ length: options.processCount }, (_, index) => ({ ...snapshot.processes[index % 3], process: { ...snapshot.processes[index % 3].process, identity: { pid: 100 + index, sequence: String(index + 1) } } }));
     const scope = window as unknown as Record<string, unknown>;
-    scope.iconCalls = []; scope.iconActive = 0; scope.iconMaxActive = 0; scope.snapshot = snapshot; scope.reconnectCalls = [];
+    scope.autostartReads = 0; scope.iconCalls = []; scope.iconActive = 0; scope.iconMaxActive = 0; scope.snapshot = snapshot; scope.reconnectCalls = [];
     scope.windowCalls = []; scope.windowMaximized = false;
     scope.isTauri = true;
     scope.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
@@ -50,7 +50,7 @@ export async function desktop(page: Page, options: { iconDelay?: number; process
           if (config.revision !== snapshot.config.revision) throw '配置已被更新';
           snapshot.config = { ...config, revision: config.revision + 1 }; return snapshot.config;
         }
-        if (command === 'get_autostart') return scope.autostart ?? { enabled: false, start_minimized: false };
+        if (command === 'get_autostart') { scope.autostartReads = Number(scope.autostartReads) + 1; return scope.autostart ?? { enabled: false, start_minimized: false }; }
         if (command === 'set_autostart') {
           if (scope.saveDelay) await new Promise(resolve => setTimeout(resolve, Number(scope.saveDelay)));
           return scope.autostart = { enabled: args.enabled, start_minimized: args.startMinimized };

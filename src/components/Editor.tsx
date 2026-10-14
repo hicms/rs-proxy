@@ -8,18 +8,22 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { Check, Trash2 } from 'lucide-react';
 import type { ProxyGroup } from '../bindings/ProxyGroup';
 import { useAction } from '../model';
+import { PrimaryButton } from './PageHeading';
+import { usePageVisible } from './RetainedView';
 
 export function Editor({ title, children, onClose, onSave, saveLabel = '保存', destructive = false }: {
   title: string; children: ReactNode; onClose: () => void; onSave: () => Promise<unknown>; saveLabel?: string; destructive?: boolean;
 }) {
   const action = useAction();
+  const visible = usePageVisible();
   const close = () => { if (!action.busy) onClose(); };
-  return <Dialog isOpen onOpenChange={close} purpose="form" width="48rem">
-    <Layout header={<DialogHeader title={title} onOpenChange={close} />}
+  if (!visible) return null;
+  return <Dialog isOpen onOpenChange={close} purpose="form" width="64ch" maxHeight="85dvh">
+    <Layout padding={6} height="fill" header={<DialogHeader title={title} onOpenChange={close} />}
       content={<LayoutContent><VStack gap={4}>{action.error && <Banner status="error" title="操作未完成" description={action.error} />}{children}</VStack></LayoutContent>}
       footer={<LayoutFooter hasDivider><HStack gap={2} hAlign="end">
         <Button label="取消" onClick={close} isDisabled={action.busy} />
-        <Button label={saveLabel} icon={<Icon icon={destructive ? Trash2 : Check} />} variant={destructive ? 'destructive' : 'primary'} isLoading={action.busy} onClick={() => void action.run(onSave).then(saved => { if (saved) onClose(); })} />
+        <PrimaryButton label={saveLabel} icon={<Icon icon={destructive ? Trash2 : Check} />} variant={destructive ? 'destructive' : 'primary'} isLoading={action.busy} onClick={() => void action.run(onSave).then(saved => { if (saved) onClose(); })} />
       </HStack></LayoutFooter>} />
   </Dialog>;
 }

@@ -7,10 +7,10 @@ test('caption controls reflect native state and preserve navigation and engine a
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await desktop(page, { customTitlebar: true });
-  const caption = page.getByRole('navigation', { name: '主导航', exact: true });
+  const caption = page.getByRole('navigation', { name: 'RS Proxy 窗口', exact: true });
   await expect(caption).toHaveAttribute('data-tauri-drag-region', 'deep');
   await expect(page.getByRole('button', { name: '最小化窗口', exact: true })).toBeVisible();
-  expect((await page.getByRole('table').boundingBox())!.y).toBeLessThan(180);
+  expect((await page.getByRole('table').boundingBox())!.y).toBeLessThan(330);
   await page.screenshot({ path: join(tmpdir(), 'rs-proxy-titlebar-light.png') });
   await page.getByRole('button', { name: '最大化窗口', exact: true }).click();
   await expect(page.getByRole('button', { name: '还原窗口', exact: true })).toBeVisible();
@@ -44,7 +44,7 @@ test('window controls stay actionable above an open modal and return to the capt
   await controls.getByRole('button', { name: '关闭窗口', exact: true }).click();
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '还原窗口', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'RS Proxy 窗口', exact: true }).getByRole('button', { name: '还原窗口', exact: true })).toBeVisible();
 });
 
 test('caption adapts to dark theme and minimum window width without overflow', async ({ page }) => {
@@ -58,7 +58,7 @@ test('caption adapts to dark theme and minimum window width without overflow', a
   await page.setViewportSize({ width: 760, height: 560 });
   await expect(page.getByRole('button', { name: '关闭窗口', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
-  const caption = page.getByRole('navigation', { name: '主导航', exact: true });
+  const caption = page.getByRole('navigation', { name: 'RS Proxy 窗口', exact: true });
   const bounds = await caption.boundingBox();
   expect(bounds!.height).toBe(48);
   expect(bounds!.y).toBe(0);
@@ -76,7 +76,7 @@ test('native operation failure remains visible without moving the caption', asyn
   await page.evaluate(() => { (window as unknown as { windowError: string }).windowError = '窗口操作失败'; });
   await page.getByRole('button', { name: '最大化窗口', exact: true }).click();
   await expect(page.getByText('窗口操作失败', { exact: true })).toBeVisible();
-  const bounds = await page.getByRole('navigation', { name: '主导航', exact: true }).boundingBox();
+  const bounds = await page.getByRole('navigation', { name: 'RS Proxy 窗口', exact: true }).boundingBox();
   expect(bounds!.y).toBe(0);
   await expect(page.getByRole('button', { name: '最大化窗口', exact: true })).toBeVisible();
 });

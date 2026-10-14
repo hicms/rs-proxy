@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ProcessIcon } from './bindings/ProcessIcon';
 import type { ProcessIdentity } from './bindings/ProcessIdentity';
 import type { ProcessView } from './bindings/ProcessView';
@@ -27,10 +27,12 @@ async function drain() {
   }
 }
 
-export function useProcessIcons(processes: ProcessView[]) {
+export function useProcessIcons(processes: ProcessView[], active = true) {
   const signature = JSON.stringify(processes.map(({ process }) => [process.identity, process.image_path]));
   const [result, setResult] = useState<{ signature: string; icons: Map<string, string | null> }>();
+  const cached = useRef(result);
   useEffect(() => {
+    if (!active) return;
     const identities = (JSON.parse(signature) as [ProcessIdentity, string][]).map(([identity]) => identity);
     if (!identities.length) return;
     let job: Job | undefined;
@@ -39,14 +41,15 @@ export function useProcessIcons(processes: ProcessView[]) {
       if (job && !job.cancelled) return;
       job = { identities, cancelled: false, receive: icons => {
         if (job) job.cancelled = true;
-        setResult({ signature, icons: new Map(icons.map(icon => [processKey(icon.identity), icon.data_url])) });
+        cached.current = { signature, icons: new Map(icons.map(icon => [processKey(icon.identity), icon.data_url])) };
+        setResult(cached.current);
       } };
       pending = job;
       queueMicrotask(() => { void drain(); });
     };
-    request();
+    if (cached.current?.signature !== signature) request();
     const timer = window.setInterval(request, 30000);
     return () => { clearInterval(timer); if (job) job.cancelled = true; };
-  }, [signature]);
+  }, [signature, active]);
   return result?.signature === signature ? result.icons : undefined;
 }

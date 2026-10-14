@@ -1,14 +1,16 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 import { memo, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Layout, LayoutHeader, LayoutContent, LayoutFooter, HStack, VStack, StackItem } from '@astryxdesign/core/Layout';
+import { Layout, LayoutContent, LayoutFooter, HStack, VStack, StackItem } from '@astryxdesign/core/Layout';
 import { Text, Heading } from '@astryxdesign/core/Text';
 import { Button } from '@astryxdesign/core/Button';
 import { Table, proportional, type TableColumn } from '@astryxdesign/core/Table';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
-import { Token } from '@astryxdesign/core/Token';
+import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { Accent, PageHeading } from '../components/PageHeading';
+import { usePageVisible } from '../components/RetainedView';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { Pagination } from '@astryxdesign/core/Pagination';
 import { Banner } from '@astryxdesign/core/Banner';
@@ -17,7 +19,7 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
-import { AppWindow, ArrowRight, RefreshCw, ListFilter, Network, Search, Undo2, Unplug } from 'lucide-react';
+import { ArrowRight, RefreshCw, ListFilter, Network, Search, Undo2, Unplug } from 'lucide-react';
 import { useAnnounce } from '@astryxdesign/core/hooks';
 import { GroupSelector, Editor } from '../components/Editor';
 import { Connections } from '../components/Connections';
@@ -63,32 +65,31 @@ export default function Processes({ snapshot }: { snapshot: Snapshot }) {
   const connectionStart = (Math.min(page, Math.max(1, Math.ceil(connections.length / 50))) - 1) * 50;
   const visibleProcesses = useMemo(() => rows.slice(processStart, processStart + 50), [rows, processStart]);
   const visibleConnections = useMemo(() => connections.slice(connectionStart, connectionStart + 50), [connections, connectionStart]);
-  const icons = useProcessIcons(visibleProcesses);
+  const visible = usePageVisible();
+  const icons = useProcessIcons(visibleProcesses, visible && tab === 'processes');
   const columns = useMemo<TableColumn<ProcessView>[]>(() => [
     { key: 'name', header: '应用', width: proportional(3), renderCell: item => <HStack gap={3} vAlign="center"><ProcessIcon dataUrl={icons?.get(processKey(item.process.identity))} /><VStack gap={0.5}><Text weight="semibold" maxLines={1}>{item.process.name}</Text><Text type="supporting" color="secondary">PID {item.process.identity.pid}</Text></VStack></HStack> },
-    { key: 'route', header: '连接方式', width: proportional(2), renderCell: item => item.route ? <Token label={snapshot.config.proxy_groups.find(group => group.id === item.route?.group_id)?.name ?? '代理'} color="green" size="sm" /> : <Text color="secondary">直连</Text> },
+    { key: 'route', header: '连接方式', width: proportional(2), renderCell: item => item.route ? <Accent><HStack gap={2} vAlign="center"><StatusDot variant="accent" label="已选代理" /><Text>{snapshot.config.proxy_groups.find(group => group.id === item.route?.group_id)?.name ?? '代理'}</Text></HStack></Accent> : <Text color="secondary">直连</Text> },
     { key: 'source', header: '代理来源', width: proportional(2), renderCell: item => <Tooltip content={proxySource(item.route, ruleNames)} isEnabled={Boolean(item.route)} hasHoverIndication={false}><Text maxLines={2} hasTruncateTooltip={false} color={item.route ? 'primary' : 'secondary'}>{proxySource(item.route, ruleNames)}</Text></Tooltip> },
     { key: 'traffic', header: '实时流量', width: proportional(2), renderCell: item => { const stats = traffic.get(processKey(item.process.identity)); return <TrafficRate stats={filterGroup ? stats?.groups.find(group => group.group_id === filterGroup.id)?.stats : stats?.total} />; } },
     { key: 'actions', header: '', align: 'end', renderCell: item => <IconButton label="详情与代理" tooltip="查看详情与代理设置" icon={<Icon icon={ArrowRight} />} variant="ghost" size="sm" onClick={() => { setSelected(item); setGroup(item.route?.group_id ?? snapshot.config.proxy_groups[0].id); }} /> },
   ], [snapshot.config.proxy_groups, ruleNames, icons, filterGroup, traffic]);
-  return <><Layout header={<LayoutHeader hasDivider padding={3}><VStack gap={2}>
-    <HStack vAlign="center" gap={4}><Heading level={1} textWrap="nowrap">进程与连接</Heading>
-    <StackItem size="fill"><TrafficSummary compact stats={summary} label={`${activeGroup?.name ?? '全部代理组'} · 本次启动流量（仅代理）`} /></StackItem>
-    <HStack gap={1} vAlign="center">
+  return <><Layout padding={6} header={<PageHeading title="进程与连接" actions={<HStack gap={2} vAlign="center">
       {tab === 'processes' && <Button label="重连已选代理" icon={<Icon icon={Unplug} />} size="sm" variant="ghost" isDisabled={!snapshot.stats.running || reconnectTargets.length === 0} tooltip={!snapshot.stats.running ? '请先启动代理引擎' : '断开当前筛选范围内需要切换到代理的旧连接'} onClick={() => setReconnect({ identities: reconnectTargets.map(item => item.process.identity), groupId: filterGroup?.id ?? null, scope: `${filterGroup?.name ?? '全部代理组'}${query ? ` · 搜索“${query}”` : ''}` })} />}
       <IconButton label="立即刷新" tooltip="立即刷新" icon={<Icon icon={RefreshCw} />} variant="ghost" size="sm" onClick={() => void model.refresh()} />
-    </HStack></HStack>
+    </HStack>} below={<VStack gap={6}>
+    <TrafficSummary compact stats={summary} label={`${activeGroup?.name ?? '全部代理组'} · 本次启动流量（仅代理）`} />
     {reconnectResult && <Banner status={reconnectResult.failures.length ? 'warning' : reconnectResult.disconnected ? 'success' : 'info'} title={reconnectResult.disconnected ? `已断开 ${reconnectResult.disconnected} 条旧连接` : reconnectResult.failures.length ? '有连接未能处理' : '没有需要断开的旧连接'} description={`保留或已结束 ${reconnectResult.skipped} 条连接。${reconnectResult.failures.length ? `${reconnectResult.failures.length} 项未能处理。` : ''}${reconnectResult.disconnected ? '应用新建连接后将按当前规则使用代理；未自动恢复时，请刷新页面或重试。' : '已代理的连接会继续保留。'}`} isDismissable onDismiss={() => setReconnectResult(undefined)}>
       {reconnectResult.failures.length > 0 && <TextArea label="未处理详情" value={reconnectResult.failures.join('\n')} isReadOnly rows={3} />}
     </Banner>}
-    <HStack vAlign="center" gap={3} wrap="wrap"><TabList size="sm" value={tab} onChange={value => { setTab(value); setPage(1); }}><Tab value="processes" label="进程" icon={<Icon icon={AppWindow} />} /><Tab value="connections" label="连接" icon={<Icon icon={Network} />} /></TabList>
+    <HStack vAlign="center" gap={3} wrap="wrap"><TabList size="sm" value={tab} onChange={value => { setTab(value); setPage(1); }}><Tab value="processes" label="进程" /><Tab value="connections" label="连接" /></TabList>
       <StackItem size="fill"><TextInput label="搜索进程、PID 或地址" isLabelHidden placeholder="搜索应用、PID 或地址…" value={query} onChange={value => { setQuery(value); setPage(1); }} startIcon="search" hasClear /></StackItem>
       {tab === 'processes' && <SegmentedControl label="显示范围" value={scope} onChange={value => { setScope(value); setPage(1); }}><SegmentedControlItem value="all" label="全部" /><SegmentedControlItem value="proxied" label="已选代理" icon={<Icon icon={ListFilter} />} /></SegmentedControl>}
-      {tab === 'processes' && <Selector label="筛选代理组" isLabelHidden value={filterGroup ? groupFilter : 'all'} onChange={value => { setGroupFilter(value); setPage(1); }} options={[{ value: 'all', label: '全部代理组' }, ...snapshot.config.proxy_groups.map(group => ({ value: String(group.id), label: group.name }))]} variant="ghost" hasSearch startIcon={<Icon icon={Network} />} />}
+      {tab === 'processes' && <Selector label="筛选代理组" isLabelHidden value={filterGroup ? groupFilter : 'all'} onChange={value => { setGroupFilter(value); setPage(1); }} options={[{ value: 'all', label: '全部代理组' }, ...snapshot.config.proxy_groups.map(group => ({ value: String(group.id), label: group.name }))]} hasSearch startIcon={<Icon icon={Network} />} />}
     </HStack>
-  </VStack></LayoutHeader>} content={<LayoutContent>
-    <VStack style={{ display: tab === 'processes' ? undefined : 'none' }}>{rows.length ? <ProcessTable data={visibleProcesses} columns={columns} idKey={processRowKey} rowCount={rows.length} rowIndexStart={processStart + 1} density="balanced" hasHover /> : <EmptyState icon={<Icon icon={Search} size="lg" />} title="没有匹配的进程" description="调整搜索条件或显示范围。" />}</VStack>
-    <VStack style={{ display: tab === 'connections' ? undefined : 'none' }}><Connections data={visibleConnections} /></VStack>
+  </VStack>} />} content={<LayoutContent padding={0}>
+    <VStack paddingInline={6} style={{ display: tab === 'processes' ? undefined : 'none' }}>{rows.length ? <ProcessTable data={visibleProcesses} columns={columns} idKey={processRowKey} rowCount={rows.length} rowIndexStart={processStart + 1} density="balanced" hasHover /> : <EmptyState icon={<Icon icon={Search} size="lg" />} title="没有匹配的进程" description="调整搜索条件或显示范围。" />}</VStack>
+    <VStack paddingInline={6} style={{ display: tab === 'connections' ? undefined : 'none' }}><Connections data={visibleConnections} /></VStack>
   </LayoutContent>} footer={<LayoutFooter hasDivider><HStack hAlign="between" vAlign="center" wrap="wrap" gap={2}><HStack gap={3} vAlign="center"><Text type="supporting">共 {total} 项 · 每秒更新</Text><Text type="supporting" color="secondary">{snapshot.stats.tcp_connections} TCP · {snapshot.stats.udp_sessions} UDP</Text></HStack><Pagination label="列表分页" page={current} onChange={setPage} totalItems={total} pageSize={50} variant="compact" /></HStack></LayoutFooter>} />
     {selected && <Editor title={selected.process.name} saveLabel="应用到进程树" onClose={() => setSelected(undefined)} onSave={async () => { await invoke('set_process_proxy', { identity: selected.process.identity, groupId: group }); await model.refresh(); }}>
       {action.error && <Banner status="error" title="操作未完成" description={action.error} />}

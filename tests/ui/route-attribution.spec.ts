@@ -8,6 +8,7 @@ async function routedProcesses(page: Page) {
   await desktop(page);
   await page.evaluate(() => {
     const snapshot = (window as unknown as { snapshot: Snapshot }).snapshot;
+    snapshot.config.revision += 1;
     snapshot.config.auto_rules = ['开发工具', '网页浏览'].map((name, index) => ({
       id: `rule-${index}`, name, enabled: true, proxy_group_id: 0, process_name: '*.exe', image_path_pattern: '', cmdline_pattern: '', protocol: 'both',
       dst_filter: { include_cidrs: [], exclude_cidrs: [], include_ports: [], exclude_ports: [] },
@@ -45,7 +46,7 @@ test('an open detail follows rule renames and route changes without mixing reuse
   await page.getByRole('row').filter({ hasText: 'Code.exe' }).getByRole('button', { name: '详情与代理' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('当前代理来源：开发工具', { exact: true })).toBeVisible();
-  await page.evaluate(() => { (window as unknown as { snapshot: Snapshot }).snapshot.config.auto_rules[0].name = '开发规则已重命名'; });
+  await page.evaluate(() => { const snapshot = (window as unknown as { snapshot: Snapshot }).snapshot; snapshot.config.revision += 1; snapshot.config.auto_rules[0].name = '开发规则已重命名'; });
   await expect(dialog.getByText('当前代理来源：开发规则已重命名', { exact: true })).toBeVisible();
   await page.evaluate(() => { (window as unknown as { snapshot: Snapshot }).snapshot.processes[0].route = { group_id: 0, rule_id: null, source: 'manual' }; });
   await expect(dialog.getByText('当前代理来源：手动选择（含继承）', { exact: true })).toBeVisible();
@@ -63,6 +64,7 @@ test('missing rule data stays explicit and long rule names remain readable', asy
   const longName = '用于工作环境的浏览器和后代进程网络连接的完整自动代理规则名称'.repeat(3);
   await page.evaluate(name => {
     const snapshot = (window as unknown as { snapshot: Snapshot }).snapshot;
+    snapshot.config.revision += 1;
     snapshot.config.auto_rules[1].name = name;
     snapshot.processes[0].route = { group_id: 0, rule_id: 'missing-rule', source: 'rule' };
   }, longName);

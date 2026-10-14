@@ -8,6 +8,7 @@ async function trafficFixture(page: Page, processCount = 3) {
   await desktop(page, { processCount });
   await page.evaluate(() => {
     const snapshot = (window as unknown as { snapshot: Snapshot }).snapshot;
+    snapshot.config.revision += 1;
     snapshot.config.proxy_groups.push({ id: 1, name: '工作代理', host: '127.0.0.1', port: 7891 });
     snapshot.processes.forEach((item, index) => { item.route = index % 3 === 2 ? null : { group_id: index % 3, rule_id: null, source: 'manual' }; });
     const stats = (uploaded: number, downloaded: number, up: number, down: number) => ({ uploaded_bytes: uploaded, downloaded_bytes: downloaded, upload_bytes_per_second: up, download_bytes_per_second: down });
@@ -42,11 +43,12 @@ test('group, scope and search combine, reset pagination, and recover from delete
   await search.fill('');
   await page.evaluate(() => {
     const snapshot = (window as unknown as { snapshot: Snapshot }).snapshot;
+    snapshot.config.revision += 1;
     snapshot.config.proxy_groups = snapshot.config.proxy_groups.filter(group => group.id !== 1);
     snapshot.processes.forEach(item => { if (item.route?.group_id === 1) item.route.group_id = 0; });
   });
   await expect(page.getByRole('button', { name: '筛选代理组', exact: true })).toContainText('全部代理组');
-  await page.evaluate(() => { (window as unknown as { snapshot: Snapshot }).snapshot.config.proxy_groups.push({ id: 1, name: '新代理', host: '127.0.0.1', port: 7891 }); });
+  await page.evaluate(() => { const snapshot = (window as unknown as { snapshot: Snapshot }).snapshot; snapshot.config.revision += 1; snapshot.config.proxy_groups.push({ id: 1, name: '新代理', host: '127.0.0.1', port: 7891 }); });
   await page.getByRole('button', { name: '立即刷新' }).click();
   await expect(page.getByRole('button', { name: '筛选代理组', exact: true })).toContainText('全部代理组');
   await page.getByRole('button', { name: '连接', exact: true }).click();
