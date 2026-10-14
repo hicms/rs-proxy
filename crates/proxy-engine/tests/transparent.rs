@@ -93,7 +93,9 @@ async fn mock_connection(
 }
 
 async fn run_client(engine: &Engine, script: &str, selected: bool) -> Result<String> {
-    let mut child = Command::new("powershell.exe")
+    let system_root = std::env::var_os("SystemRoot").context("missing SystemRoot")?;
+    let powershell = Path::new(&system_root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let mut child = Command::new(powershell)
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(0x08000000)
         .kill_on_drop(true)
@@ -104,7 +106,9 @@ async fn run_client(engine: &Engine, script: &str, selected: bool) -> Result<Str
     let pid = child.id().context("missing child PID")?;
     let mut output = BufReader::new(child.stdout.take().unwrap());
     let mut ready = String::new();
-    timeout(Duration::from_secs(10), output.read_line(&mut ready)).await??;
+    timeout(Duration::from_secs(10), output.read_line(&mut ready))
+        .await
+        .context("PowerShell fixture did not emit READY before network traffic")??;
     if ready.trim() != "READY" {
         bail!("client did not initialize: {ready}");
     }
@@ -172,7 +176,7 @@ $reply=[byte[]]::new(9); $offset=0; while ($offset -lt 9) { $count=$stream.Read(
 $client.Client.Shutdown([Net.Sockets.SocketShutdown]::Send); if ($stream.ReadByte() -ne -1) { throw 'missing EOF' }
 [Console]::WriteLine([Text.Encoding]::ASCII.GetString($reply)); $client.Dispose()
 "#;
-        let tcp = run_client(&engine,tcp_script,true).await?;
+        let tcp = run_client(&engine,tcp_script,true).await.context("proxied TCP echo")?;
         assert_eq!(tcp.trim(),"tcp-proof");
         let reset_script = r#"
 $ErrorActionPreference='Stop'; [Console]::WriteLine('READY'); [Console]::ReadLine() | Out-Null
@@ -186,7 +190,7 @@ $client.Dispose(); [Console]::WriteLine('reset')
         assert_eq!(run_client(&engine,reset_script,true).await?.trim(),"reset");
         timeout(Duration::from_secs(3), async {
             while engine.stats().tcp_connections != 0 { tokio::time::sleep(Duration::from_millis(10)).await; }
-        }).await?;
+        }).await.context("TCP connection count did not return to zero after reset")?;
         assert!(engine.stats().running);
         assert_eq!(engine.stats().last_error, None, "an established peer reset is not an engine failure");
         assert_eq!(run_client(&engine,tcp_script,true).await?.trim(),"tcp-proof");
@@ -195,7 +199,7 @@ $client.Dispose(); [Console]::WriteLine('reset')
         assert_eq!(run_client(&engine,&handshake_reset,true).await?.trim(),"reset");
         timeout(Duration::from_secs(3), async {
             while engine.stats().last_error.is_none() { tokio::time::sleep(Duration::from_millis(10)).await; }
-        }).await?;
+        }).await.context("SOCKS handshake reset was not reported")?;
         assert!(engine.stats().last_error.unwrap().contains("建立 SOCKS5 连接"));
         let direct_script = tcp_script.replace("198.19.99.1',443", "198.19.99.4',4444");
         assert_eq!(run_client(&engine,&direct_script,false).await?.trim(),"tcp-proof");

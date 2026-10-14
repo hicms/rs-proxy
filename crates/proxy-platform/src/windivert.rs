@@ -9,6 +9,8 @@ use std::{
 };
 use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
+mod errors;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Address {
@@ -77,6 +79,7 @@ type Shutdown = unsafe extern "system" fn(isize, u32) -> i32;
 type Close = unsafe extern "system" fn(isize) -> i32;
 type Checksums = unsafe extern "system" fn(*mut c_void, u32, *mut Address, u64) -> i32;
 type SetParam = unsafe extern "system" fn(isize, u32, u64) -> i32;
+type GetParam = unsafe extern "system" fn(isize, u32, *mut u64) -> i32;
 
 pub struct Driver {
     _library: Library,
@@ -87,6 +90,7 @@ pub struct Driver {
     close: Close,
     checksums: Checksums,
     set_param: SetParam,
+    get_param: GetParam,
 }
 impl Driver {
     pub fn load(directory: &Path) -> Result<Arc<Self>> {
@@ -105,6 +109,9 @@ impl Driver {
                 close: *library.get(b"WinDivertClose\0")?,
                 checksums: *library.get(b"WinDivertHelperCalcChecksums\0")?,
                 set_param: *library.get(b"WinDivertSetParam\0")?,
+                get_param: *library
+                    .get(b"WinDivertGetParam\0")
+                    .context("WinDivert DLL 缺少驱动版本查询接口")?,
                 _library: library,
             }))
         }
@@ -119,13 +126,16 @@ impl Driver {
         let filter = CString::new(filter)?;
         let handle = unsafe { (self.open)(filter.as_ptr().cast(), layer, priority, flags) };
         if handle == -1 {
-            return Err(io::Error::last_os_error())
-                .context("打开 WinDivert，请确认以管理员身份运行");
+            return Err(errors::open(io::Error::last_os_error()));
         }
-        Ok(Arc::new(DivertHandle {
+        let handle = Arc::new(DivertHandle {
             driver: self.clone(),
             handle,
-        }))
+        });
+        let (major, minor) = handle.version().context("读取 WinDivert 驱动 API 版本")?;
+        errors::require_supported_version(major, minor)?;
+        tracing::debug!(major, minor, "WinDivert 驱动 API 已连接");
+        Ok(handle)
     }
 }
 pub struct DivertHandle {
@@ -133,6 +143,18 @@ pub struct DivertHandle {
     handle: isize,
 }
 impl DivertHandle {
+    /// The driver API exposes major/minor only, not the release patch version.
+    pub fn version(&self) -> io::Result<(u64, u64)> {
+        let mut major = 0;
+        let mut minor = 0;
+        for (parameter, value) in [(3, &mut major), (4, &mut minor)] {
+            if unsafe { (self.driver.get_param)(self.handle, parameter, value) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok((major, minor))
+    }
+
     pub fn receive(&self, packet: &mut [u8]) -> io::Result<(usize, Address)> {
         let mut length = 0;
         let mut address = Address::default();

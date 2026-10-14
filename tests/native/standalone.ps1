@@ -6,6 +6,14 @@ Set-Location -LiteralPath $repo
 if (Get-Process -Name rs-proxy -ErrorAction SilentlyContinue) { throw 'Close RS Proxy before standalone startup verification.' }
 if (Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue) { throw 'Port 1420 must be unused; this test verifies startup without a dev server.' }
 $appExe = (Resolve-Path -LiteralPath $Executable).Path
+$resourceDirectory = Join-Path (Split-Path -Parent $appExe) 'windivert'
+$resourceHashes = @{}
+foreach ($name in @('WinDivert.dll', 'WinDivert64.sys', 'LICENSE')) {
+  $expected = (Get-FileHash -LiteralPath (Join-Path $repo "src-tauri/resources/windivert/$name")).Hash
+  $resourceHashes[$name] = (Get-FileHash -LiteralPath (Join-Path $resourceDirectory $name)).Hash
+  if ($resourceHashes[$name] -ne $expected) { throw "Packaged resource differs from the verified source: $name" }
+}
+$expectedDll = (Resolve-Path -LiteralPath (Join-Path $resourceDirectory 'WinDivert.dll')).Path
 $data = Join-Path $env:LOCALAPPDATA 'dev.rsproxy.desktop'
 $configPath = Join-Path $data 'config.json'
 if (Test-Path -LiteralPath (Join-Path $data 'dns-recovery.json')) { throw 'DNS recovery journal exists; refusing to launch.' }
@@ -30,6 +38,11 @@ try {
   $controls = @('进程与连接', '重连已选代理', '暂停代理') | ConvertTo-Json -Compress
   & $windowsPowerShell -NoProfile -File $windows -Action page -ProcessId $application.Id -Value $controls
   if ($LASTEXITCODE -ne 0) { throw 'The exact desktop executable failed standalone page verification.' }
+  $modules = @((Get-Process -Id $application.Id).Modules | Where-Object ModuleName -EQ 'WinDivert.dll')
+  if ($modules.Count -ne 1 -or -not [string]::Equals($modules[0].FileName, $expectedDll, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The desktop process did not load its packaged WinDivert.dll.'
+  }
+  if ((Get-FileHash -LiteralPath $modules[0].FileName).Hash -ne $resourceHashes['WinDivert.dll']) { throw 'Loaded WinDivert.dll differs from the packaged resource.' }
   if ($Titlebar) {
     $env:RS_PROXY_TITLEBAR_PID = [string]$application.Id
     & node tests/native/titlebar.mjs
@@ -56,6 +69,9 @@ try {
   if ($dnsBefore -ne $dnsAfter -or (Test-Path -LiteralPath (Join-Path $data 'dns-recovery.json'))) { throw 'DNS baseline differs; no restoration writes are performed.' }
   if ($configHash -ne (Get-FileHash -LiteralPath $configPath).Hash) { throw 'User configuration changed.' }
   if ($binaryHash -ne (Get-FileHash -LiteralPath $appExe).Hash) { throw 'Desktop executable changed during verification.' }
+  foreach ($name in $resourceHashes.Keys) {
+    if ((Get-FileHash -LiteralPath (Join-Path $resourceDirectory $name)).Hash -ne $resourceHashes[$name]) { throw "Packaged resource changed during verification: $name" }
+  }
 }
 if ($failure) { throw $failure }
-Write-Output "PASS exact executable startup without a development server: $appExe; SHA256 $binaryHash; config and DNS unchanged"
+Write-Output "PASS exact executable startup without a development server: $appExe; SHA256 $binaryHash; loaded $expectedDll; packaged resources, config and DNS unchanged"

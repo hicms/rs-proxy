@@ -32,7 +32,9 @@ pwsh -File scripts/prepare-windivert.ps1
 npm run desktop
 ```
 
-WinDivert 官方 x64 DLL、签名驱动和许可已随工程提供。准备脚本可重新下载并验证固定版本的 SHA256 和驱动签名。
+WinDivert 2.2.2 官方 x64 DLL、签名驱动和许可已随工程提供。准备脚本验证固定发行归档的 SHA256 和驱动签名，全部资源准备成功后才替换；失败时保留或恢复原资源。已有可信归档可通过 `pwsh -File scripts/prepare-windivert.ps1 -Archive <zip文件>` 使用。安全防护阻止读取时，应先核验对应文件，不关闭整体防护。
+
+Rust 打开驱动时查询并检查 2.2 API，按系统错误区分缺少驱动、权限、签名和不兼容版本等原因。API 只返回主次版本，2.2.2 发行身份由归档哈希与文件比对确定。构建时保留内容一致的资源，避免覆盖 Windows 正在使用的驱动；如果资源内容确实变化但仍被占用，构建会报告具体文件，需要在相关应用退出后更新。
 
 ```powershell
 npm run build
@@ -69,6 +71,7 @@ npm run tauri -- build --bundles nsis
 - 进程 DNS 不接管共享 Windows DNS Client 服务、回环 DNS、浏览器缓存或加密 DNS（DoH/DoT），也不提供完整的域名路由或 IPv6 代理。它不能保证所有浏览器域名解析都会经过所选进程。
 - 已建立的 TCP 连接不能无缝切换；「重连已选代理」可手动断开符合条件的旧直连，再由应用建立新连接。
 - 受保护进程的路径或命令行可能无法读取，对应匹配条件不会凭空补全。
+- 进程树的实时更新依赖 Windows ETW 启停事件。会话建立成功但系统未提供这些事件时，进程树依靠每 30 秒的快照同步；新 socket 仍会主动查询进程及祖先身份。
 - 首包归属等待默认 20ms；超过等待窗口的 TCP 连接固定直连，避免重传中改变去向。它不是用于阻止所有直连流量的防火墙。
 - 验证覆盖当前 Windows x64 环境；其它 Windows 版本、长期持续运行和极端负载尚需进一步验证。
 
@@ -106,7 +109,9 @@ npm run test:installer
 
 `test:installer` 验证已构建的 NSIS 安装包，要求没有现有 RS Proxy 安装注册，且日常配置已存在并关闭 DNS。它安装到随机临时目录，检查资源、启动与正常退出，再卸载并核对配置与 DNS 基线；测试期间会暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节。
 
-`test:standalone` 直接启动已有的 `target/debug/rs-proxy.exe`，不重新构建；通过 Windows UI Automation 验证无开发服务器时的内置页面、重连按钮和引擎运行状态，再正常退出。要求管理员权限、没有运行中的 RS Proxy，且日常配置已存在并关闭 DNS；测试期间暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节，并核对配置、DNS 和可执行文件哈希。可用 `npm run test:standalone -- -Executable target/release/rs-proxy.exe` 验证发布程序。
+`test:standalone` 直接启动已有的 `target/debug/rs-proxy.exe`，不重新构建；通过 Windows UI Automation 验证无开发服务器时的内置页面、重连按钮和引擎运行状态，并断言进程实际加载 EXE 随附的 WinDivert DLL、DLL/驱动/许可与项目资源哈希一致，再正常退出。要求管理员权限、没有运行中的 RS Proxy，且日常配置已存在并关闭 DNS；测试期间暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节，并核对配置、DNS、资源和可执行文件哈希。可用 `npm run test:standalone -- -Executable target/release/rs-proxy.exe` 验证发布程序。
+
+`pwsh -File tests/prepare-windivert.ps1 -Archive <官方2.2.2归档>` 在独立临时目录验证资源准备的重复执行、坏归档拒绝、发布失败恢复和恢复失败备份保留，不启动驱动。
 
 生成前端 Rust 类型：`cargo run -p proxy-core --bin export-types`。前端新增页面先使用 Astryx CLI 的 `build`、`template` 和 `component` 命令，不另建组件样式体系。字体从本地 Figtree 文件加载；doctor 的字体警告来自它对官方远程字体 CSS 的静态检查，Vite 会将其替换为本地字体入口。
 

@@ -3018,6 +3018,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "json-patch",
  "proxy-core",
  "proxy-engine",
  "proxy-platform",
@@ -3027,6 +3028,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
+ "tauri-utils",
  "tempfile",
  "tokio",
  "tracing",

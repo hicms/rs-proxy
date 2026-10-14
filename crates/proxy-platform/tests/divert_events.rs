@@ -21,6 +21,7 @@ fn driver_reports_real_udp_socket_identity_and_shutdown_unblocks_receive() {
             1 | 4,
         )
         .unwrap();
+    assert_eq!(handle.version().unwrap(), (2, 2));
     let reader = handle.clone();
     let (tx, rx) = mpsc::channel();
     let worker = thread::spawn(move || {

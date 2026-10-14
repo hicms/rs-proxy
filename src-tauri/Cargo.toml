@@ -18,6 +18,10 @@ platform-tests = ["proxy-engine/platform-tests"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+tauri-utils = "2"
+serde_json.workspace = true
+json-patch = "4"
+anyhow.workspace = true
 
 [dependencies]
 tauri = { version = "2.12.2", features = ["tray-icon", "image-ico"] }
