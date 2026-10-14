@@ -146,7 +146,12 @@ impl DnsForwarder {
                         if let Ok(Err(error)) = result { tracing::warn!(%error,"DNS 查询失败"); }
                     }
                     datagram = udp.recv_from(&mut bytes), if tasks.len() < 256 => {
-                        let (length,peer) = match datagram { Ok(value) => value, Err(error) => { tracing::error!(%error,"DNS 接收失败"); break; } };
+                        let (length,peer) = match datagram {
+                            Ok(value) => value,
+                            // Windows queues a reset on the socket when a reply reaches a port the client already closed; such transient errors must not stop the forwarder.
+                            Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset) => { continue; },
+                            Err(error) => { tracing::error!(%error,"DNS 接收失败"); break; }
+                        };
                         let query = bytes[..length].to_vec(); let group = group.clone(); let udp = udp.clone();
                         tasks.spawn(async move {
                             let response = udp_response(exchange(&group,upstream,&query,None).await?)?;
@@ -154,7 +159,11 @@ impl DnsForwarder {
                         });
                     }
                     client = tcp.accept(), if tasks.len() < 256 => {
-                        let (stream,_) = match client { Ok(value) => value, Err(error) => { tracing::error!(%error,"DNS TCP 接收失败"); break; } };
+                        let (stream,_) = match client {
+                            Ok(value) => value,
+                            Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset) => { continue; },
+                            Err(error) => { tracing::error!(%error,"DNS TCP 接收失败"); break; }
+                        };
                         let group = group.clone(); tasks.spawn(async move { timeout(Duration::from_secs(30),tcp_client(stream,group,upstream)).await.context("DNS TCP 客户端超时")? });
                     }
                 }
