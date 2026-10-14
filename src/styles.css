@@ -3,3 +3,32 @@
 
 html, body, #root { height: 100%; }
 body { margin: 0; font-family: var(--font-family-body); }
+
+.rs-proxy-shell .window-titlebar {
+  height: var(--spacing-12);
+  padding-block: 0;
+  padding-inline-start: var(--spacing-4);
+  padding-inline-end: var(--spacing-1);
+  user-select: none;
+}
+.rs-proxy-shell .astryx-layout-header:has(.window-titlebar) > * { max-width: none; }
+.window-controls { flex-shrink: 0; }
+.window-controls-placeholder { width: calc(3 * var(--size-element-lg)); height: var(--size-element-lg); }
+.window-controls-modal {
+  position: fixed;
+  inset-block-start: calc((var(--spacing-12) - var(--size-element-lg)) / 2);
+  inset-inline-end: var(--spacing-1);
+  inset-block-end: auto;
+  inset-inline-start: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+body:has(.rs-proxy-shell[data-custom-titlebar='true']) dialog::backdrop { inset-block-start: var(--spacing-12); }
+.rs-proxy-shell .window-titlebar[data-mode='mobile-bar'] > :last-child > :last-child { order: -1; }
+body:has(.rs-proxy-shell[data-custom-titlebar='true']) .astryx-mobile-nav > :not(.window-controls) {
+  margin-block-start: var(--spacing-12);
+  height: calc(100% - var(--spacing-12));
+}

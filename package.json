@@ -13,6 +13,7 @@
     "test:e2e": "npm test --",
     "test:native": "pwsh -NoProfile -File tests/native/run.ps1",
     "test:standalone": "pwsh -NoProfile -File tests/native/standalone.ps1",
+    "test:titlebar": "pwsh -NoProfile -File tests/native/titlebar.ps1",
     "test:installer": "pwsh -NoProfile -File tests/native/installer.ps1",
     "test:proxy": "cargo run -p proxy-engine --example check-live-proxy --",
     "tauri": "tauri",

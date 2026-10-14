@@ -14,6 +14,15 @@ public static class NativeWindows {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int size);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, StringBuilder text, int size);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hwnd, int command);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+  public struct Rect { public int Left, Top, Right, Bottom; }
+  public struct Point { public int X, Y; }
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wp, IntPtr lp);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wp, string text);
   public static IntPtr[] ForProcess(int processId) {
@@ -28,6 +37,39 @@ public static class NativeWindows {
 $windows = @([NativeWindows]::ForProcess($ProcessId))
 if ($Action -eq 'inspect') {
   @($windows | ForEach-Object { @{ Handle=$_.ToInt64(); Title=[NativeWindows]::Title($_); Class=[NativeWindows]::Class($_); Visible=[NativeWindows]::IsWindowVisible($_) } }) | ConvertTo-Json -Compress
+  exit
+}
+if ($Action -eq 'restore' -or $Action -eq 'drag') {
+  $main = @($windows | Where-Object { [NativeWindows]::Title($_) -eq 'RS Proxy' })
+  if ($main.Count -ne 1) { throw 'Expected one application window' }
+  if ($Action -eq 'restore') {
+    [NativeWindows]::ShowWindowAsync($main[0], 9) | Out-Null
+    exit
+  }
+  $before = New-Object NativeWindows+Rect
+  $after = New-Object NativeWindows+Rect
+  $cursor = New-Object NativeWindows+Point
+  if (-not [NativeWindows]::GetWindowRect($main[0], [ref]$before)) { throw 'Could not read window bounds' }
+  if (-not [NativeWindows]::GetCursorPos([ref]$cursor)) { throw 'Could not read cursor position' }
+  $foreground = [NativeWindows]::GetForegroundWindow()
+  try {
+    [NativeWindows]::SetForegroundWindow($main[0]) | Out-Null
+    Start-Sleep -Milliseconds 200
+    if ([NativeWindows]::GetForegroundWindow() -ne $main[0]) { throw 'Could not focus the owned test window before dragging' }
+    [NativeWindows]::SetCursorPos($before.Left + 75, $before.Top + 24) | Out-Null
+    [NativeWindows]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    [NativeWindows]::SetCursorPos($before.Left + 115, $before.Top + 54) | Out-Null
+    Start-Sleep -Milliseconds 200
+  } finally {
+    [NativeWindows]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+    [NativeWindows]::SetCursorPos($cursor.X, $cursor.Y) | Out-Null
+    if ([NativeWindows]::GetForegroundWindow() -eq $main[0]) { [NativeWindows]::SetForegroundWindow($foreground) | Out-Null }
+  }
+  Start-Sleep -Milliseconds 100
+  if (-not [NativeWindows]::GetWindowRect($main[0], [ref]$after)) { throw 'Could not read moved window bounds' }
+  if ($after.Left -eq $before.Left -and $after.Top -eq $before.Top) { throw 'Caption drag did not move the native window' }
+  @{ before=@{x=$before.Left; y=$before.Top}; after=@{x=$after.Left; y=$after.Top} } | ConvertTo-Json -Compress
   exit
 }
 if ($Action -eq 'close') {

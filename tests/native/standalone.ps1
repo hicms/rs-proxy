@@ -1,4 +1,5 @@
-param([string]$Executable = 'target\debug\rs-proxy.exe')
+#Requires -RunAsAdministrator
+param([string]$Executable = 'target\debug\rs-proxy.exe', [switch]$Titlebar)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location -LiteralPath $repo
@@ -16,6 +17,10 @@ $binaryHash = (Get-FileHash -LiteralPath $appExe).Hash
 $dnsBefore = Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
 $application = $null
 $failure = $null
+$oldTitlebarPid = $env:RS_PROXY_TITLEBAR_PID
+if ($Titlebar -and (Get-NetTCPConnection -LocalPort 9226 -State Listen -ErrorAction SilentlyContinue)) { throw 'Port 9226 must be unused for title bar verification.' }
+$configBackup = Join-Path $env:TEMP ('rs-proxy-standalone-config-' + [Guid]::NewGuid().ToString('N') + '.json')
+[IO.File]::WriteAllBytes($configBackup, $originalConfig)
 try {
   $config.ui.close_to_tray = $false
   $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configPath -Encoding utf8
@@ -25,14 +30,28 @@ try {
   $controls = @('进程与连接', '重连已选代理', '暂停代理') | ConvertTo-Json -Compress
   & $windowsPowerShell -NoProfile -File $windows -Action page -ProcessId $application.Id -Value $controls
   if ($LASTEXITCODE -ne 0) { throw 'The exact desktop executable failed standalone page verification.' }
-  & $windowsPowerShell -NoProfile -File $windows -Action close -ProcessId $application.Id -Value 'RS Proxy'
-  if ($LASTEXITCODE -ne 0 -or -not $application.WaitForExit(10000) -or $application.ExitCode -ne 0) { throw 'Standalone test application did not exit cleanly.' }
-} catch { $failure = $_ } finally {
-  if ($application -and -not $application.HasExited) {
-    Stop-Process -Id $application.Id
-    if (-not $application.WaitForExit(10000)) { throw 'Owned test process could not be stopped.' }
+  if ($Titlebar) {
+    $env:RS_PROXY_TITLEBAR_PID = [string]$application.Id
+    & node tests/native/titlebar.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Native title bar verification failed.' }
+  } else {
+    & $windowsPowerShell -NoProfile -File $windows -Action close -ProcessId $application.Id -Value 'RS Proxy'
+    if ($LASTEXITCODE -ne 0) { throw 'Standalone window close failed.' }
   }
-  [IO.File]::WriteAllBytes($configPath, $originalConfig)
+  if (-not $application.WaitForExit(10000) -or $application.ExitCode -ne 0) { throw 'Standalone test application did not exit cleanly.' }
+} catch { $failure = $_ } finally {
+  $env:RS_PROXY_TITLEBAR_PID = $oldTitlebarPid
+  try {
+    if ($application -and -not $application.HasExited) {
+      Stop-Process -Id $application.Id
+      if (-not $application.WaitForExit(10000)) { throw 'Owned test process could not be stopped.' }
+    }
+  } finally {
+    if (-not $application -or $application.HasExited) {
+      [IO.File]::WriteAllBytes($configPath, $originalConfig)
+      Remove-Item -LiteralPath $configBackup
+    } else { Write-Warning "Original configuration retained at $configBackup; restore after the owned test process exits." }
+  }
   $dnsAfter = Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily | Select-Object InterfaceIndex,AddressFamily,ServerAddresses | ConvertTo-Json -Depth 5 -Compress
   if ($dnsBefore -ne $dnsAfter -or (Test-Path -LiteralPath (Join-Path $data 'dns-recovery.json'))) { throw 'DNS baseline differs; no restoration writes are performed.' }
   if ($configHash -ne (Get-FileHash -LiteralPath $configPath).Hash) { throw 'User configuration changed.' }

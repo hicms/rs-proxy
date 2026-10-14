@@ -52,6 +52,10 @@ pub fn request_exit(app: AppHandle) {
     });
 }
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "windows")]
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_decorations(false)?;
+    }
     let data = app.path().app_local_data_dir()?;
     std::fs::create_dir_all(&data)?;
     let appender = tracing_appender::rolling::Builder::new()

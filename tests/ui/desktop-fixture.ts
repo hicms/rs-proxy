@@ -9,18 +9,28 @@ const fixture: Snapshot = {
   connections: [{ pid: 101, protocol: 'tcp', local_address: '10.0.0.2', local_port: 50123, remote_address: '192.0.2.1', remote_port: 443, state: 'ESTABLISHED' }],
   stats: { running: true, elevated: true, dns_active: false, tcp_connections: 1, udp_sessions: 0, proxied_packets: 100, direct_packets: 10, uploaded_bytes: 1024, downloaded_bytes: 8192, parked_syns: 1, timed_out_syns: 0, last_error: null },
 };
-export async function desktop(page: Page, options: { iconDelay?: number; processCount?: number; brokenIcon?: boolean } = {}) {
+export async function desktop(page: Page, options: { iconDelay?: number; processCount?: number; brokenIcon?: boolean; customTitlebar?: boolean } = {}) {
   const icons = [`data:image/png;base64,${readFileSync('src-tauri/icons/icon.png').toString('base64')}`, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg=='];
   await page.addInitScript(({ snapshot, options, icons }) => {
     if (options.processCount) snapshot.processes = Array.from({ length: options.processCount }, (_, index) => ({ ...snapshot.processes[index % 3], process: { ...snapshot.processes[index % 3].process, identity: { pid: 100 + index, sequence: String(index + 1) } } }));
     const scope = window as unknown as Record<string, unknown>;
     scope.iconCalls = []; scope.iconActive = 0; scope.iconMaxActive = 0; scope.snapshot = snapshot; scope.reconnectCalls = [];
+    scope.windowCalls = []; scope.windowMaximized = false;
     scope.isTauri = true;
     scope.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     scope.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
       transformCallback: () => 1,
       invoke: async (command: string, args: Record<string, unknown> = {}) => {
         if (command.startsWith('plugin:event|')) return 1;
+        if (command === 'plugin:window|is_decorated') return !options.customTitlebar;
+        if (command === 'plugin:window|is_maximized') return scope.windowMaximized;
+        if (command.startsWith('plugin:window|')) {
+          (scope.windowCalls as string[]).push(command);
+          if (scope.windowError) throw scope.windowError;
+          if (command === 'plugin:window|toggle_maximize') scope.windowMaximized = !scope.windowMaximized;
+          return;
+        }
         if (command === 'get_snapshot') return structuredClone(snapshot);
         if (command === 'get_process_icons') {
           const identities = args.identities as { pid: number; sequence: string }[];
