@@ -1,19 +1,26 @@
+mod identities;
+
 use crate::windows::{status, wide};
 use anyhow::{Context as _, Result};
+use identities::Identities;
 use proxy_core::model::{ProcessIdentity, ProcessInfo};
 use std::{
     mem::size_of,
     ptr,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
 };
-use windows_sys::{Win32::System::Diagnostics::Etw::*, core::GUID};
-
-const PROCESS_PROVIDER: GUID = GUID::from_u128(0x22fb2cd6_0e7b_422b_a0c7_2fad1fd0e716);
+use windows_sys::{
+    Win32::System::{
+        Diagnostics::Etw::*,
+        Rpc::{RPC_S_UUID_LOCAL_ONLY, UuidCreate},
+    },
+    core::GUID,
+};
 
 #[derive(Debug)]
 pub enum ProcessEvent {
@@ -24,17 +31,51 @@ pub enum ProcessEvent {
 struct CallbackContext {
     sender: SyncSender<ProcessEvent>,
     needs_sync: Arc<AtomicBool>,
+    state: Mutex<CallbackState>,
+}
+
+#[derive(Default)]
+struct CallbackState {
+    identities: Identities,
+    events_lost: u32,
+    buffers_lost: u32,
 }
 
 unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
     unsafe {
         let record = &*record;
         let context = &*record.UserContext.cast::<CallbackContext>();
-        if !matches!(record.EventHeader.EventDescriptor.Id, 1 | 2) {
+        let provider = record.EventHeader.ProviderId;
+        if (
+            provider.data1,
+            provider.data2,
+            provider.data3,
+            provider.data4,
+        ) != (
+            ProcessGuid.data1,
+            ProcessGuid.data2,
+            ProcessGuid.data3,
+            ProcessGuid.data4,
+        ) || !matches!(
+            u32::from(record.EventHeader.EventDescriptor.Opcode),
+            EVENT_TRACE_TYPE_START | EVENT_TRACE_TYPE_END | EVENT_TRACE_TYPE_DC_START
+        ) {
             return;
         }
-        let event = decode(record);
-        if event.is_err() || event.is_ok_and(|event| context.sender.try_send(event).is_err()) {
+        let mut state = context.state.lock().unwrap();
+        match decode(record, &mut state.identities) {
+            Ok(Some(event)) => {
+                if context.sender.try_send(event).is_err() {
+                    context.needs_sync.store(true, Ordering::Release);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, "解码进程事件失败");
+                context.needs_sync.store(true, Ordering::Release);
+            }
+        }
+        if state.identities.take_sync_required() {
             context.needs_sync.store(true, Ordering::Release);
         }
     }
@@ -63,69 +104,51 @@ fn property(record: &EVENT_RECORD, name: &str) -> Result<Vec<u8>> {
     })?;
     Ok(buffer)
 }
-fn decode(record: &EVENT_RECORD) -> Result<ProcessEvent> {
+fn decode(record: &EVENT_RECORD, identities: &mut Identities) -> Result<Option<ProcessEvent>> {
+    // ProcessTrace converts the QPC session clock to FILETIME unless RAW_TIMESTAMP is set.
+    let timestamp = u64::try_from(record.EventHeader.TimeStamp).context("无效的进程事件时间")?;
+    identities.observe(timestamp);
     let pid = u32::from_ne_bytes(
-        property(record, "ProcessID")?
+        property(record, "ProcessId")?
             .try_into()
             .map_err(|_| anyhow::anyhow!("无效的进程 ID 字段"))?,
     );
-    let sequence = u64::from_ne_bytes(
-        property(record, "ProcessSequenceNumber")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("无效的进程序号字段"))?,
-    );
-    let identity = ProcessIdentity {
-        pid,
-        sequence: sequence.to_string(),
+    let key = property(record, "UniqueProcessKey")?;
+    let key = match key.as_slice() {
+        [a, b, c, d] => u64::from(u32::from_ne_bytes([*a, *b, *c, *d])),
+        [a, b, c, d, e, f, g, h] => u64::from_ne_bytes([*a, *b, *c, *d, *e, *f, *g, *h]),
+        _ => anyhow::bail!("无效的进程事件标识字段"),
     };
-    if record.EventHeader.EventDescriptor.Id == 2 {
-        return Ok(ProcessEvent::Exited(identity));
+    if u32::from(record.EventHeader.EventDescriptor.Opcode) == EVENT_TRACE_TYPE_END {
+        return Ok(identities
+            .exited(pid, key, timestamp)
+            .map(ProcessEvent::Exited));
     }
-    if let Ok(live) = crate::process::query(pid)
-        && live.identity == identity
-    {
-        return Ok(ProcessEvent::Started(live));
-    }
-    let parent_pid = u32::from_ne_bytes(
-        property(record, "ParentProcessID")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("无效的父进程字段"))?,
-    );
-    let parent_sequence = u64::from_ne_bytes(
-        property(record, "ParentProcessSequenceNumber")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("无效的父进程序号字段"))?,
-    );
-    let raw_image = property(record, "ImageName")?;
-    let image: Vec<u16> = raw_image
-        .chunks_exact(2)
-        .map(|s| u16::from_ne_bytes([s[0], s[1]]))
-        .take_while(|c| *c != 0)
-        .collect();
-    let image_path = String::from_utf16_lossy(&image);
-    let name = image_path
-        .rsplit('\\')
-        .next()
-        .unwrap_or(&image_path)
-        .to_owned();
-    let parent = (parent_pid != 0 && parent_sequence < sequence).then(|| ProcessIdentity {
-        pid: parent_pid,
-        sequence: parent_sequence.to_string(),
-    });
-    Ok(ProcessEvent::Started(ProcessInfo {
-        identity,
-        parent,
-        name,
-        image_path,
-        cmdline: String::new(),
-    }))
+    let process = match crate::process::query_before(pid, Some(timestamp)) {
+        Ok(process) => process,
+        Err(error) => {
+            // Protected or already vanished processes cannot supply a proven system identity.
+            tracing::debug!(pid, %error, "进程事件身份不可用");
+            return Ok(None);
+        }
+    };
+    Ok(identities
+        .started(key, timestamp, process.identity.clone())
+        .then_some(ProcessEvent::Started(process)))
 }
 unsafe extern "system" fn on_buffer(log: *mut EVENT_TRACE_LOGFILEW) -> u32 {
     unsafe {
-        if (*log).EventsLost > 0 {
-            let context = &*(*log).Context.cast::<CallbackContext>();
+        let context = &*(*log).Context.cast::<CallbackContext>();
+        let header = &(*log).LogfileHeader;
+        let events_lost = header.Anonymous2.Anonymous.EventsLost;
+        let mut state = context.state.lock().unwrap();
+        if events_lost > state.events_lost || header.BuffersLost > state.buffers_lost {
+            state.identities.forget_history();
+            state.identities.take_sync_required();
             context.needs_sync.store(true, Ordering::Release);
         }
+        state.events_lost = events_lost;
+        state.buffers_lost = header.BuffersLost;
     }
     1
 }
@@ -139,7 +162,19 @@ pub struct ProcessEvents {
 }
 impl ProcessEvents {
     pub fn start() -> Result<Self> {
-        let name = wide(&format!("RSProxy.Process.{}", std::process::id()));
+        let mut session_guid = GUID::default();
+        let result = unsafe { UuidCreate(&mut session_guid) };
+        if result != RPC_S_UUID_LOCAL_ONLY {
+            status(result as u32).context("创建进程事件会话标识")?;
+        }
+        let name = wide(&format!(
+            "RSProxy.Process.{}.{:08x}{:04x}{:04x}{:016x}",
+            std::process::id(),
+            session_guid.data1,
+            session_guid.data2,
+            session_guid.data3,
+            u64::from_be_bytes(session_guid.data4)
+        ));
         let bytes = size_of::<EVENT_TRACE_PROPERTIES>() + name.len() * 2;
         let mut storage = vec![0u64; bytes.div_ceil(8)];
         let properties = storage.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
@@ -147,7 +182,9 @@ impl ProcessEvents {
             (*properties).Wnode.BufferSize = bytes as u32;
             (*properties).Wnode.ClientContext = 1;
             (*properties).Wnode.Flags = WNODE_FLAG_TRACED_GUID;
-            (*properties).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+            (*properties).Wnode.Guid = session_guid;
+            (*properties).LogFileMode = EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_SYSTEM_LOGGER_MODE;
+            (*properties).EnableFlags = EVENT_TRACE_FLAG_PROCESS;
             (*properties).FlushTimer = 1;
             (*properties).LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as u32;
             ptr::copy_nonoverlapping(
@@ -167,6 +204,7 @@ impl ProcessEvents {
         let context = Box::new(CallbackContext {
             sender,
             needs_sync: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(CallbackState::default()),
         });
         let mut instance = Self {
             receiver,
@@ -175,19 +213,6 @@ impl ProcessEvents {
             thread: None,
             context,
         };
-        status(unsafe {
-            EnableTraceEx2(
-                session,
-                &PROCESS_PROVIDER,
-                EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-                5,
-                0x10,
-                0,
-                0,
-                ptr::null(),
-            )
-        })
-        .context("订阅系统进程事件")?;
         let mut log = EVENT_TRACE_LOGFILEW {
             LoggerName: name.as_ptr().cast_mut(),
             Context: (&mut *instance.context as *mut CallbackContext).cast(),

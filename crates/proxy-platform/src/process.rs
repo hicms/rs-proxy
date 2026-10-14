@@ -116,7 +116,7 @@ fn command_line(handle: &Handle) -> Result<String> {
 pub fn query(pid: u32) -> Result<ProcessInfo> {
     query_before(pid, None)
 }
-fn query_before(pid: u32, latest_creation: Option<u64>) -> Result<ProcessInfo> {
+pub(crate) fn query_before(pid: u32, latest_creation: Option<u64>) -> Result<ProcessInfo> {
     let handle = Handle::new(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })
         .with_context(|| format!("打开进程 {pid}"))?;
     if let Some(latest) = latest_creation {
@@ -137,11 +137,11 @@ fn query_before(pid: u32, latest_creation: Option<u64>) -> Result<ProcessInfo> {
             )
         } == 0
         {
-            return Err(io::Error::last_os_error()).context("校验 socket 进程创建时间");
+            return Err(io::Error::last_os_error()).context("校验事件对应的进程创建时间");
         }
         let created = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
         if created > latest {
-            bail!("socket 事件对应的 PID 已被复用");
+            bail!("事件对应的 PID 已被复用");
         }
     }
     let id = identity(&handle, pid)?;
