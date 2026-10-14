@@ -1,120 +1,113 @@
 # RS Proxy
 
-Windows 上的进程级 SOCKS5 代理工具。Rust 负责网络和系统集成，Tauri 2 提供桌面窗口，React 界面直接使用 Astryx 官方组件、Neutral 主题和布局模板。
+**English** | [简体中文](README.zh-CN.md)
 
-## 使用
+A process-level SOCKS5 proxy for Windows, built with Rust, Tauri 2, React, and Astryx. Select an application and its descendants, or define routing rules, to forward their IPv4 TCP and UDP traffic through a SOCKS5 proxy.
 
-1. 以管理员身份启动 RS Proxy。
-2. 在「代理组」中填写 SOCKS5 主机和端口，点击「测试连接」验证无认证握手。
-3. 在「进程与连接」中搜索进程，打开「详情与代理」，将代理组应用到该进程及其后代。
-4. 或在「路由规则」中创建并启用规则。规则从上到下匹配，手动选择优先。
+## Features
 
-「进程与连接」支持按代理组筛选，并与搜索、已选代理范围一起使用。页面每秒显示全部或所选组的上传、下载速度和累计流量；进程行显示实时速度，详情中可看该进程累计。流量从本次启动代理开始统计，重新启动引擎后清零。组汇总包含已结束进程的流量，搜索只过滤列表。
+- Per-process proxy selection with inheritance across the process tree.
+- Ordered routing rules for process names, executable paths, command lines, protocols, destination networks, and ports.
+- Live connections, upload/download rates, and traffic totals by process and proxy group.
+- Optional DNS forwarding for selected processes, without changing the network adapter's DNS settings.
+- A separate, optional system DNS forwarder with persistent recovery records.
+- Reconnect selected applications' eligible existing direct TCP connections.
+- Light/dark themes, tray controls, configuration import/export, and optional elevated startup at sign-in.
 
-已经打开的应用需要切换旧连接时，先应用代理设置，再点击页面右上角「重连已选代理」。确认后会处理当前搜索和代理组筛选范围内、全部分页中的已选代理进程，只断开符合当前 TCP 规则的旧 IPv4 直连，不结束进程；已代理的连接、入站连接和本地代理提供者会保留。应用重新建立连接后才会走代理，下载或通话可能需要重试；不会强制应用自动重连，也不处理 UDP 或 IPv6 连接。操作结果显示实际断开、保留和未能处理的数量。
+## Getting started
 
-统计的是成功经 TCP/UDP 中继转发的载荷，不包含直连、SOCKS 握手、网络包头或单独的 DNS 转发器。列表分组按进程当前选择筛选，流量归属按连接实际使用的代理组计算；修改规则后，已有连接可能仍在使用先前的组。
+Run RS Proxy as administrator, then:
 
-默认没有启用的规则，系统 DNS 转发默认关闭。已选进程默认启用独立的「代理进程的 DNS」，无需修改网卡 DNS。应用不会修改系统代理或路由表。关闭按钮默认收起到托盘；从托盘选择「退出」会停止引擎并恢复本应用设置的 DNS。
+1. Add a SOCKS5 host and port on the proxy groups page and test the connection.
+2. Open a process's details and apply a proxy group to that process and its descendants.
+3. Alternatively, add routing rules. Enabled rules match from top to bottom; manual process selections take priority.
 
-规则可同时约束进程名、程序路径前缀、命令行、协议、目标网段和端口。进程名支持 `*` / `?`；命令行的普通关键词需全部命中，含通配符时按完整模式匹配。排除条件优先于包含条件。配置更新作用于新 TCP 连接；已有 TCP 连接继续使用建立时的代理组。
+Configuration changes apply to new connections. Existing TCP connections retain their original route. Use the reconnect action when an application needs to replace existing direct connections; the application must establish its own new connections. This action does not terminate processes or reconnect UDP/IPv6 traffic.
 
-## 开发环境
+Closing the window normally minimizes the application to the tray. Choose **Exit** from the tray to stop the engine and restore any system DNS settings changed by RS Proxy. System DNS forwarding is disabled by default. RS Proxy does not change the Windows system proxy or routing table.
 
-- Windows 10/11 x64、WebView2 Runtime。
-- Rust 1.94 或更新版本，MSVC 工具链；Visual Studio Build Tools 的 C++ 桌面开发组件与 Windows SDK。
-- Node.js 22.13 或更新版本，npm。
-- 运行桌面程序和手动平台集成测试时需要管理员权限；默认测试不需要。
+## Requirements and supported traffic
+
+- Windows 10/11 x64 and WebView2 Runtime. Administrator privileges are required for packet capture.
+- WinDivert **2.2.2**: the unmodified official x64 DLL, signed driver, and license are included in this repository and application packages.
+- SOCKS5 servers using no authentication. General UDP forwarding requires `UDP ASSOCIATE`; process DNS forwarding uses TCP instead.
+- Transparent forwarding covers IPv4 TCP and unfragmented UDP. IPv6, ICMP, and fragmented IPv4 traffic remain direct. SOCKS5 UDP fragmentation is unsupported.
+- Process DNS forwarding handles ordinary DNS traffic to non-loopback IPv4 port 53. It does not capture shared Windows DNS Client service queries, cached answers, or encrypted DNS such as DoH/DoT.
+- Protected processes may not expose executable paths or command lines. A connection whose owner cannot be resolved within the initial attribution window remains direct. RS Proxy is not a firewall that blocks every direct connection.
+
+## Build from source
+
+Install Rust **1.94+** with the MSVC toolchain, Visual Studio Build Tools with the C++ desktop workload and Windows SDK, Node.js **22.13+**, and npm. Use PowerShell 7 for resource preparation and native verification scripts.
 
 ```powershell
 npm ci
-pwsh -File scripts/prepare-windivert.ps1
 npm run desktop
 ```
 
-WinDivert 2.2.2 官方 x64 DLL、签名驱动和许可已随工程提供。准备脚本验证固定发行归档的 SHA256 和驱动签名，全部资源准备成功后才替换；失败时保留或恢复原资源。已有可信归档可通过 `pwsh -File scripts/prepare-windivert.ps1 -Archive <zip文件>` 使用。安全防护阻止读取时，应先核验对应文件，不关闭整体防护。
-
-Rust 打开驱动时查询并检查 2.2 API，按系统错误区分缺少驱动、权限、签名和不兼容版本等原因。API 只返回主次版本，2.2.2 发行身份由归档哈希与文件比对确定。构建时保留内容一致的资源，避免覆盖 Windows 正在使用的驱动；如果资源内容确实变化但仍被占用，构建会报告具体文件，需要在相关应用退出后更新。
+The included WinDivert resources are ready to use. To verify or restore them from the pinned official release:
 
 ```powershell
-npm run build
+pwsh -NoProfile -File scripts/prepare-windivert.ps1
+# An existing official archive can also be supplied:
+pwsh -NoProfile -File scripts/prepare-windivert.ps1 -Archive <path-to-archive.zip>
+```
+
+The preparation script verifies the archive's SHA256 and driver signature before replacing resources. Failed preparation preserves the previous resources. If security software blocks the archive, inspect the individual detection before proceeding.
+
+```powershell
+# Standalone debug executable with the embedded frontend
 npm run desktop:build -- --debug
+# Release executable and NSIS installer
 npm run tauri -- build --bundles nsis
 ```
 
-调试程序位于 `target/debug/rs-proxy.exe`，发布程序位于 `target/release/rs-proxy.exe`，NSIS 安装包位于 `target/release/bundle/nsis/`。分发便携程序时须同时保留 `windivert/` 和许可证资源；建议使用安装包。
+Outputs are `target/debug/rs-proxy.exe`, `target/release/rs-proxy.exe`, and `target/release/bundle/nsis/`. Portable distributions must include the adjacent `windivert/` directory and license resources. The installer includes these dependencies.
 
-`desktop:build` 生成的程序内置界面，直接打开即可使用。`npm run desktop` 用于开发，会启动并依赖本地前端服务器。桌面二进制需要 `desktop` 特性，Tauri CLI 已自动启用；默认 `cargo test --workspace` 不构建桌面二进制，避免覆盖已打包程序。检查桌面入口代码时使用 `cargo clippy --workspace --all-targets --features rs-proxy/desktop -- -D warnings`。
+The Tauri CLI enables the required `desktop` feature. Ordinary Cargo tests do not rebuild or replace the standalone executable. `npm run desktop` uses a local development server; `npm run dev` alone previews the frontend with no Windows backend.
 
-仅运行 `npm run dev` 可以查看界面，但浏览器没有 Windows 服务，页面会明确显示未连接。
+## Configuration, DNS, and logs
 
-## 配置与恢复
+Application data is stored in `%LOCALAPPDATA%\dev.rsproxy.desktop`:
 
-数据目录是 `%LOCALAPPDATA%\dev.rsproxy.desktop`：
+| Path | Purpose |
+| --- | --- |
+| `config.json` | Proxy groups, rules, and settings. Writes are atomic and reject stale revisions; a corrupt file is preserved. |
+| `dns-recovery.json` | Original adapter DNS settings saved before a system DNS change. Failed restores remain pending for the next startup. |
+| `logs/` | Daily logs, retaining the latest seven files. Log-level changes take effect on the next startup. |
 
-- `config.json`：代理组、规则和设置，原子写入并检查修订号。配置损坏时不会覆盖原文件。
-- `dns-recovery.json`：DNS 变更前保存的恢复记录。每个接口恢复成功后才移除相应记录，全部恢复后删除文件；下次启动会先处理未完成恢复。
-- `logs/`：按日生成日志，保留最近 7 份。日志级别下次启动生效。
+**Process DNS** uses the selected process's proxy group and configured upstream DNS server. Both TCP and UDP queries are forwarded over SOCKS5 TCP. UDP answers larger than 512 bytes are truncated with the DNS TC flag so clients can retry over TCP. Disable this option when an application needs local or split DNS resolution.
 
-设置页可导入/导出 JSON。删除代理组时必须指定替换组；规则、DNS 和手动选择在配置保存成功后一起更新。
+**System DNS forwarding** is independent. It listens on IPv4 loopback port 53 and changes active IPv4 adapters' DNS settings while enabled. Stopping the engine or exiting restores those settings. If restoration fails, the forwarder and recovery record remain active; resolve the interface error and retry. After a forced termination, restart RS Proxy to complete recovery.
 
-「设置 → 网络 → 代理进程的 DNS」将已选进程发往非回环 IPv4 地址 53 端口的普通 DNS 查询，交给配置的上游 DNS，使用该进程选择的代理组。TCP 直接连接上游；UDP 查询通过 SOCKS5 TCP 发送，回复保留原 DNS 地址。大于 512 字节的 UDP 回复使用 TC 标记，让客户端通过 TCP 重试。该功能不修改系统 DNS；查询仍遵守规则的协议、网段和端口限制，但不受全局直连网段限制。需要内网域名或本地分流解析时可关闭。已发出的查询和已建立的 TCP 连接保留原设置，新请求采用保存后的设置。
+Traffic counters measure payload successfully forwarded by the TCP/UDP relays. They exclude direct traffic, protocol overhead, and the separate system DNS forwarder. Counters reset when the engine restarts; existing connections retain the proxy group used when they were established.
 
-「系统 DNS 转发」是另一项独立功能，使用同一上游 DNS 和单独选择的代理组。本地 IPv4 回环地址的 53 端口接收 UDP/TCP 查询，再经 SOCKS5 TCP 转发。启用时会更改活动 IPv4 接口的 DNS；停止引擎或正常退出时恢复原值。若系统拒绝恢复，应用保留转发器和恢复记录，并显示错误；解决接口问题后重试停止或退出。强制结束应用后，应重新启动以执行恢复。
+## Development and verification
 
-自动启动使用当前 Windows 用户的登录计划任务，以管理员权限运行；可选择启动后收起到托盘。
-
-## 支持范围
-
-- 透明转发 IPv4 TCP 与未分片 UDP。IPv6、ICMP 和 IPv4 分片保持直连。
-- SOCKS5 无认证。普通 UDP 要求服务器支持 UDP ASSOCIATE；进程 DNS 使用 TCP，不依赖 UDP ASSOCIATE。不支持 SOCKS UDP 分片。
-- 进程 DNS 不接管共享 Windows DNS Client 服务、回环 DNS、浏览器缓存或加密 DNS（DoH/DoT），也不提供完整的域名路由或 IPv6 代理。它不能保证所有浏览器域名解析都会经过所选进程。
-- 已建立的 TCP 连接不能无缝切换；「重连已选代理」可手动断开符合条件的旧直连，再由应用建立新连接。
-- 受保护进程的路径或命令行可能无法读取，对应匹配条件不会凭空补全。
-- 进程树通过独立的 Windows 系统跟踪会话接收进程启停事件，并核验进程创建时间及系统序号，防止 PID 复用和迟到事件误关联。每 30 秒的快照同步仍用于校正存活进程；新 socket 会主动查询进程及祖先身份。消费事件前已退出或无权查询的进程可能无法取得身份，后续快照不能恢复其完整历史祖先链。
-- 首包归属等待默认 20ms；超过等待窗口的 TCP 连接固定直连，避免重传中改变去向。它不是用于阻止所有直连流量的防火墙。
-- 验证覆盖当前 Windows x64 环境；其它 Windows 版本、长期持续运行和极端负载尚需进一步验证。
-
-## 验证与维护
+Run these checks in a Windows MSVC environment:
 
 ```powershell
+npm run build
+npm run astryx -- doctor
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features rs-proxy/desktop -- -D warnings
 cargo test --workspace
-npm run build
 npm test
-npm run astryx -- doctor
 ```
 
-默认 Rust 测试覆盖路由、配置、协议、流量计数和内存中的 DNS 恢复逻辑，不启动抓包驱动，不要求本地代理或管理员权限。依赖真实 Windows 进程、图标、ETW、WinDivert 和桌面服务引擎的集成用例受 `platform-tests` 特性控制，默认不编译、也不运行。
+Default Rust tests use controlled local fixtures and require no administrator privileges or external proxy. Browser tests mock desktop IPC and use Microsoft Edge locally; CI environments can install Chromium with `npx playwright install chromium`. They verify interaction, routing displays, retained page state, and small-window layouts.
 
-浏览器测试使用模拟桌面 IPC，验证界面交互与窄窗口布局。本地使用已安装的 Microsoft Edge；CI 使用 Playwright 对应版本的 Chromium，先运行 `npx playwright install chromium`。产品构建只检查产品源码；`npm test` 会先运行独立的测试类型检查，也可单独执行 `npm run check:tests`。完整工作区构建和检查应使用 Windows MSVC 环境；项目尚未配置 CI 工作流。
-
-实际代理与原生桌面验收：
+Optional Windows integration tests exercise real process events, WinDivert, and transparent TCP/UDP/DNS routing with local test servers:
 
 ```powershell
+# Run in an elevated terminal with no other RS Proxy instance running
 cargo test --workspace --features rs-proxy/platform-tests
-cargo test -p proxy-engine --features platform-tests --test process_dns -- --nocapture
-npm run test:proxy -- 127.0.0.1:7891
-npm run test:native
-npm run test:standalone
-npm run test:installer
 ```
 
-这些命令仅用于本机手动验收，不加入常规 CI。`platform-tests` 需要管理员权限与 WinDivert，透明代理用例启动独立受控进程和本地 SOCKS5 测试服务，目标使用 `198.19.99.0/24`，不依赖外部服务。`test:proxy` 使用生产协议代码执行真实 TCP/UDP 查询，并在随机回环端口验证 DNS 转发。`test:native` 需要管理员权限、可用的 `127.0.0.1:7891` SOCKS5 服务和公网连接；先退出 RS Proxy，避免两套引擎并发。它每次将带本地调试端口的 QA 程序构建到独立的 `target/native-e2e/`，使用真实 Tauri IPC、独立网络子进程和透明字节观察器，验证进程路由、规则、设置、原生文件对话框和桌面生命周期；测试配置与日常配置分开，并恢复自动启动任务。证据写入 `%TEMP%/rs-proxy-e2e/`。公网超时按失败记录，不能用浏览器模拟测试代替。
+Process DNS integration tests also require Node.js. These tests do not change system DNS. Desktop verification commands are `npm run test:standalone`, `npm run test:titlebar`, and `npm run test:installer`. They require elevation, no running RS Proxy instance, and an existing application configuration with system DNS forwarding disabled. Build the debug executable before standalone/titlebar verification and the NSIS installer before installer verification. The installer check additionally requires no existing RS Proxy installation. Native checks preserve the configuration and adapter DNS baseline.
 
-`process_dns` 使用独立 Node.js 进程和仅支持 TCP CONNECT 的受控 SOCKS5 服务，验证 TCP/UDP DNS、同 ID 并发、截断后 TCP 重试、失效 socket 回复隔离、流量计数及配置热更新；需要本地 Node.js，不查询公网域名。
+Generate frontend types with `cargo run -p proxy-core --bin export-types`. Rust owns routing, configuration, persistence, and Windows integration; the frontend consumes typed Tauri commands and events. Contributor conventions are in [AGENTS.md](AGENTS.md).
 
-以上命令均不切换系统 DNS。原生测试始终保持系统 DNS 转发关闭，并比较运行前后的网卡 DNS；测试集中不包含系统 DNS 写入用例。随机端口转发通过不代表系统 DNS 接管已验证。
+## License
 
-`test:installer` 验证已构建的 NSIS 安装包，要求没有现有 RS Proxy 安装注册，且日常配置已存在并关闭 DNS。它安装到随机临时目录，检查资源、启动与正常退出，再卸载并核对配置与 DNS 基线；测试期间会暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节。
-
-`test:standalone` 直接启动已有的 `target/debug/rs-proxy.exe`，不重新构建；通过 Windows UI Automation 验证无开发服务器时的内置页面、重连按钮和引擎运行状态，并断言进程实际加载 EXE 随附的 WinDivert DLL、DLL/驱动/许可与项目资源哈希一致，再正常退出。要求管理员权限、没有运行中的 RS Proxy，且日常配置已存在并关闭 DNS；测试期间暂时关闭“关闭窗口时收起到托盘”，结束后恢复原配置字节，并核对配置、DNS、资源和可执行文件哈希。可用 `npm run test:standalone -- -Executable target/release/rs-proxy.exe` 验证发布程序。
-
-`pwsh -File tests/prepare-windivert.ps1 -Archive <官方2.2.2归档>` 在独立临时目录验证资源准备的重复执行、坏归档拒绝、发布失败恢复和恢复失败备份保留，不启动驱动。
-
-生成前端 Rust 类型：`cargo run -p proxy-core --bin export-types`。前端新增页面先使用 Astryx CLI 的 `build`、`template` 和 `component` 命令，不另建组件样式体系。字体从本地 Figtree 文件加载；doctor 的字体警告来自它对官方远程字体 CSS 的静态检查，Vite 会将其替换为本地字体入口。
-
-目录职责：`crates/proxy-core` 管理领域和配置；`crates/proxy-platform` 封装 Windows；`crates/proxy-engine` 管理代理会话；`src-tauri` 组合桌面生命周期与命令；`src` 实现 Astryx 界面。
-
-代码采用 MIT 许可。第三方资源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+RS Proxy is licensed under [MIT](LICENSE). Third-party components retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

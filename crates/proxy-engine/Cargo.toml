@@ -28,7 +28,3 @@ hickory-proto = { version = "0.25.2", default-features = false, features = ["std
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[[example]]
-name = "check-live-proxy"
-path = "tests/support/live_proxy.rs"

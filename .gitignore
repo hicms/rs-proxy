@@ -1,13 +1,59 @@
+# Local plans and dependencies
 /.plan/
-/node_modules/
-/dist/
-/target/
-/src-tauri/target/
+node_modules/
+
+# Builds, generated Tauri schemas, and test reports
+dist/
+target/
 /src-tauri/gen/
-/test-results/
-/playwright-report/
+test-results/
+playwright-report/
+blob-report/
+coverage/
+.cache/
+.vite/
+*.tsbuildinfo
+
+# Executables, debug symbols, object files, and installer archives
+*.exe
+*.dll
+*.sys
+*.pdb
+*.ilk
+*.obj
+*.o
+*.lib
+*.a
+*.exp
+*.msi
+*.msix
+*.cab
+*.zip
+*.7z
+*.dmp
+
+# Required, unmodified WinDivert 2.2.2 runtime resources
+!/src-tauri/resources/windivert/WinDivert.dll
+!/src-tauri/resources/windivert/WinDivert64.sys
+
+# Runtime data, credentials, temporary files, and editor state
+logs/
 *.log
+*.log.*
+/config.json
+/dns-recovery.json
 .env
 .env.*
 !.env.example
-!/src-tauri/resources/windivert/WinDivert.dll
+*.tmp
+*.temp
+*.bak
+*.orig
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+/src-tauri/resources/.windivert-prepare-*/

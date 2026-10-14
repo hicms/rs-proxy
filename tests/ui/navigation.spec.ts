@@ -1,8 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { desktop } from './desktop-fixture';
 import type { Snapshot } from '../../src/bindings/Snapshot';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 type Fixture = { snapshot: Snapshot; iconCalls: unknown[]; autostartReads: number; table?: Element };
 
@@ -17,7 +15,6 @@ test('sidebar starts expanded, collapses, and leaves room around page content', 
   const table = (await page.getByRole('table').boundingBox())!;
   expect(heading.x - expanded.x - expanded.width).toBeGreaterThanOrEqual(24);
   expect(1280 - table.x - table.width).toBeGreaterThanOrEqual(24);
-  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-ui-processes.png') });
   await nav.getByRole('button', { name: /Collapse|收起|折叠/ }).click();
   await expect.poll(async () => (await nav.boundingBox())!.width).toBeLessThan(100);
   await nav.getByRole('link', { name: '设置', exact: true }).click();
@@ -74,7 +71,6 @@ test('settings fade separators and proxy search work in the official themes', as
   const separators = page.locator('.astryx-divider[aria-orientation="vertical"]');
   await expect(separators).toHaveCount(3);
   expect(await separators.first().evaluate(element => getComputedStyle(element).maskImage)).toContain('linear-gradient');
-  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-ui-settings.png') });
   await page.getByRole('button', { name: '网络', exact: true }).click();
   const dnsHeading = (await page.getByRole('heading', { name: '进程 DNS', exact: true }).boundingBox())!;
   const upstream = (await page.getByRole('textbox', { name: '上游 DNS IPv4 地址' }).boundingBox())!;
@@ -82,14 +78,12 @@ test('settings fade separators and proxy search work in the official themes', as
   expect(divider.x).toBeGreaterThan(dnsHeading.x + dnsHeading.width);
   expect(upstream.x).toBeGreaterThan(divider.x);
   expect(upstream.y - dnsHeading.y).toBeLessThan(180);
-  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-ui-network.png') });
   await page.getByRole('link', { name: '代理组', exact: true }).click();
   await page.getByRole('textbox', { name: '搜索代理组' }).fill('7890');
   await expect(page.getByRole('row').nth(1)).toContainText('本地代理');
   await page.getByRole('textbox', { name: '搜索代理组' }).fill('missing');
   await expect(page.getByText('没有匹配的代理组')).toBeVisible();
   await page.getByRole('textbox', { name: '搜索代理组' }).fill('');
-  await page.screenshot({ path: join(tmpdir(), 'rs-proxy-ui-proxies.png') });
 });
 
 test('hidden process views suspend icon polling and refresh changed identities on return', async ({ page }) => {
